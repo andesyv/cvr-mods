@@ -1,5 +1,7 @@
 ﻿using System;
+using ABI_RC.Core.InteractionSystem;
 using cohtml;
+using cohtml.Net;
 using MelonLoader;
 using UnityEngine;
 using UnityEngine.Animations;
@@ -22,6 +24,8 @@ namespace StickyMenu
         private CohtmlView MenuView = null;
         private Transform PlayerLocalTransform = null;
         private ParentConstraint Constraint;
+        private int ConstraintSourceIndex;
+        private bool Enabled = false;
 
         public override void OnSceneWasLoaded(int buildIndex, string sceneName)
         {
@@ -43,9 +47,10 @@ namespace StickyMenu
             if (MenuView is null || PlayerLocalTransform is null)
                 return;
 
-            Constraint = MenuView.gameObject.AddComponent<ParentConstraint>();
-            Constraint.constraintActive = false;
+            SetupConstraint();
 
+            MethodPatcher.OnMenuEnabled += EnableConstraint;
+            MethodPatcher.OnMenuDisabled += DisableConstraint;
             MethodPatcher.DoPatching();
 
             MenuView.Listener.ReadyForBindings += RegisterEvents;
@@ -87,6 +92,44 @@ namespace StickyMenu
             MelonLogger.Msg("Init done!");
 
             InitStatus = Status.Finished;
+        }
+
+        private void SetupConstraint()
+        {
+            Constraint = MenuView.gameObject.AddComponent<ParentConstraint>();
+            Constraint.constraintActive = false;
+            Constraint.weight = 1f;
+
+            ConstraintSource source = new ConstraintSource();
+            source.sourceTransform = PlayerLocalTransform;
+            source.weight = 1f;
+            ConstraintSourceIndex = Constraint.AddSource(source);
+        }
+
+        private void EnableConstraint()
+        {
+            if (Enabled)
+                return;
+
+            Enabled = true;
+
+            Vector3 diffDist = MenuView.transform.position - PlayerLocalTransform.position;
+            // Convert to local difference (local difference is always a constant, so could replace this computation...)
+            diffDist = PlayerLocalTransform.worldToLocalMatrix * diffDist;
+            Constraint.SetTranslationOffset(ConstraintSourceIndex, diffDist);
+
+            Vector3 diffRot = MenuView.transform.rotation.eulerAngles - PlayerLocalTransform.rotation.eulerAngles;
+            Constraint.SetRotationOffset(ConstraintSourceIndex, diffRot);
+            Constraint.constraintActive = true;
+        }
+
+        private void DisableConstraint()
+        {
+            if (!Enabled)
+                return;
+
+            Enabled = false;
+            Constraint.constraintActive = false;
         }
     }
 }

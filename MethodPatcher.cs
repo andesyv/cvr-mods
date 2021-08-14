@@ -7,8 +7,8 @@ namespace StickyMenu
 {
     class MethodPatcher
     {
-        public static Action<ViewManager> OnMenuEnabled;
-        public static Action<ViewManager> OnMenuDisabled;
+        public static Action OnMenuEnabled;
+        public static Action OnMenuDisabled;
 
         public static void DoPatching()
         {
@@ -20,15 +20,12 @@ namespace StickyMenu
     [HarmonyPatch(typeof(ViewManager), "UiStateToggle", new Type[] { typeof(bool) })]
     public class ViewManagerPatch
     {
-        /*private static AccessTools.FieldRef<ViewManager, bool> _gameMenuOpenRef =
-            AccessTools.FieldRefAccess<ViewManager, bool>("_gameMenuOpen");*/
-
         public static void Postfix(bool show)
         {
             if (show)
-                MethodPatcher.OnMenuEnabled(__instance);
+                MethodPatcher.OnMenuEnabled();
             else
-                MethodPatcher.OnMenuDisabled(__instance);
+                MethodPatcher.OnMenuDisabled();
         }
     }
 }
