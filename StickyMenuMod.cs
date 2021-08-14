@@ -46,6 +46,7 @@ namespace StickyMenu
             Constraint = MenuView.gameObject.AddComponent<ParentConstraint>();
             Constraint.constraintActive = false;
 
+            MethodPatcher.DoPatching();
 
             MenuView.Listener.ReadyForBindings += RegisterEvents;
 
