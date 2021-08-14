@@ -26,6 +26,7 @@ namespace StickyMenu
         private ParentConstraint Constraint;
         private int ConstraintSourceIndex;
         private bool Enabled = false;
+        private Config config;
 
         public override void OnSceneWasLoaded(int buildIndex, string sceneName)
         {
@@ -46,6 +47,8 @@ namespace StickyMenu
 
             if (MenuView is null || PlayerLocalTransform is null)
                 return;
+
+            config = new Config();
 
             SetupConstraint();
 
@@ -104,11 +107,17 @@ namespace StickyMenu
             source.sourceTransform = PlayerLocalTransform;
             source.weight = 1f;
             ConstraintSourceIndex = Constraint.AddSource(source);
+
+            config.enabled.OnValueChanged += (bool oldVal, bool newVal) =>
+            {
+                if (Enabled && newVal)
+                    Constraint.constraintActive = Enabled = false;
+            };
         }
 
         private void EnableConstraint()
         {
-            if (Enabled)
+            if (Enabled || !config.enabled.Value)
                 return;
 
             Enabled = true;
@@ -125,7 +134,7 @@ namespace StickyMenu
 
         private void DisableConstraint()
         {
-            if (!Enabled)
+            if (!Enabled || !config.enabled.Value)
                 return;
 
             Enabled = false;
