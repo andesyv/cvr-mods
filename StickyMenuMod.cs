@@ -1,11 +1,16 @@
 ﻿using System;
 using cohtml;
 using MelonLoader;
+using UnityEngine;
+using UnityEngine.Animations;
 
 namespace StickyMenu
 {
     public class StickyMenuMod : MelonMod
     {
+        private const string MainMenuViewName = "CohtmlWorldView";
+        private const string PlayerLocalTransformName = "_PLAYERLOCAL";
+
         enum Status
         {
             NotStarted,
@@ -13,8 +18,10 @@ namespace StickyMenu
             Finished
         }
 
-        private Status initStatus = Status.NotStarted;
-        private CohtmlView menuView;
+        private Status InitStatus = Status.NotStarted;
+        private CohtmlView MenuView = null;
+        private Transform PlayerLocalTransform = null;
+        private ParentConstraint Constraint;
 
         public override void OnSceneWasLoaded(int buildIndex, string sceneName)
         {
@@ -24,24 +31,34 @@ namespace StickyMenu
 
         private void Init()
         {
-            if (initStatus != Status.NotStarted)
+            if (InitStatus != Status.NotStarted)
                 return;
 
-            menuView = FindMainMenuview();
-            if (menuView is null)
+            if (MenuView is null)
+                MenuView = FindMainMenuview();
+
+            if (PlayerLocalTransform is null)
+                PlayerLocalTransform = FindPlayerTransform();
+
+            if (MenuView is null || PlayerLocalTransform is null)
                 return;
 
-            menuView.Listener.ReadyForBindings += RegisterEvents;
+            Constraint = MenuView.gameObject.AddComponent<ParentConstraint>();
+            Constraint.constraintActive = false;
 
-            initStatus = Status.WaitingForEventRegistration;
+
+            MenuView.Listener.ReadyForBindings += RegisterEvents;
+
+            InitStatus = Status.WaitingForEventRegistration;
         }
+
         private CohtmlView FindMainMenuview()
         {
             var objects = UnityEngine.Object.FindObjectsOfType<CohtmlView>();
             foreach (var view in objects)
             {
                 // Apparantly only CohtmlWorldView is the view connected to the in-game menu, and not CohtmlHud (which is probably the HUD)
-                if (String.Equals(view.gameObject.name, "CohtmlWorldView", StringComparison.OrdinalIgnoreCase))
+                if (String.Equals(view.gameObject.name, MainMenuViewName, StringComparison.OrdinalIgnoreCase))
                 {
                     return view;
                 }
@@ -50,18 +67,25 @@ namespace StickyMenu
             return null;
         }
 
+        private Transform FindPlayerTransform()
+        {
+            var obj = PersistentObjectFinder.Find(PlayerLocalTransformName, StringComparison.OrdinalIgnoreCase);
+            return obj?.transform;
+        }
+
         private void RegisterEvents()
         {
-            var view = FindMainMenuview();
-            if (view is null || !view.View.IsReadyForBindings())
+            if (MenuView is null || !MenuView.View.IsReadyForBindings())
                 return;
 
-            view.View.RegisterForEvent("LoadInstanceDetails", new Action(() =>
+            MenuView.View.RegisterForEvent("LoadInstanceDetails", new Action(() =>
             {
                 MelonLogger.Msg("Instance detail loaded event!");
             }));
 
-            initStatus = Status.Finished;
+            MelonLogger.Msg("Init done!");
+
+            InitStatus = Status.Finished;
         }
     }
 }
