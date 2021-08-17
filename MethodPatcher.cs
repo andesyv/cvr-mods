@@ -46,7 +46,7 @@ namespace StickyMenu
         private static AccessTools.FieldRef<ControllerRay, bool> handRef =
             AccessTools.FieldRefAccess<ControllerRay, bool>("hand");
 
-        public static void Postfix(ControllerRay __instance)
+        public static void Prefix(ControllerRay __instance)
         {
             MethodPatcher.rayInstance = __instance;
             var MenuHit = !(ViewManager.Instance.uiCollider is null) && ViewManager.Instance.uiCollider.Raycast(
@@ -55,11 +55,13 @@ namespace StickyMenu
             var FocusAwayFromMenu = LastMenuHit && !MenuHit;
             LastMenuHit = MenuHit;
 
-            var down = MenuHit && MouseDown(__instance);
-            var up = !MenuHit || MouseUp(__instance);
+            /// If dragging, raytracing will always fail, so just go by the input instead.
+            var down = StickyMenuMod.Dragging ? MouseDown(__instance) : (MenuHit && MouseDown(__instance));
+            var up = StickyMenuMod.Dragging ? MouseUp(__instance) : (!MenuHit || MouseUp(__instance));
 
             var pressed = !LastMouseDown && down;
-            var released = LastMouseDown && !LastMouseUp && up;
+            var released = !down && !LastMouseUp && up;
+
 
             LastMouseDown = down;
             LastMouseUp = up;
@@ -67,13 +69,17 @@ namespace StickyMenu
             if (pressed)
             {
                 MethodPatcher.MouseDownOnMenu = true;
-                MethodPatcher.OnMenuMouseDown();
+                var handler = MethodPatcher.OnMenuMouseDown;
+                if (handler != null)
+                    handler();
             }
 
             if (released)
             {
                 MethodPatcher.MouseDownOnMenu = false;
-                MethodPatcher.OnMenuMouseUp();
+                var handler = MethodPatcher.OnMenuMouseUp;
+                if (handler != null)
+                    handler();
             }
         }
 

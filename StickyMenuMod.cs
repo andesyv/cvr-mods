@@ -29,7 +29,7 @@ namespace StickyMenu
         private FixedJoint Constraint;
         private int ConstraintSourceIndex;
         private bool Enabled = false;
-        private bool Dragging = false;
+        public static bool Dragging = false;
         private Config config;
         private CVRPickupObject Pickupable;
         private MethodInfo GrabObjectMethod;
