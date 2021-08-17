@@ -49,14 +49,14 @@ namespace StickyMenu
         public static void Postfix(ControllerRay __instance)
         {
             MethodPatcher.rayInstance = __instance;
-            var MenuHit = ViewManager.Instance.uiCollider.Raycast(
+            var MenuHit = !(ViewManager.Instance.uiCollider is null) && ViewManager.Instance.uiCollider.Raycast(
                 new Ray(__instance.transform.position, __instance.transform.TransformDirection(__instance.RayDirection)), out MethodPatcher.hitInfo,
                 1000f);
             var FocusAwayFromMenu = LastMenuHit && !MenuHit;
             LastMenuHit = MenuHit;
 
             var down = MenuHit && MouseDown(__instance);
-            var up = FocusAwayFromMenu || (MenuHit && MouseUp(__instance));
+            var up = !MenuHit || MouseUp(__instance);
 
             var pressed = !LastMouseDown && down;
             var released = LastMouseDown && !LastMouseUp && up;

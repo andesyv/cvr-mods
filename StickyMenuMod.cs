@@ -1,5 +1,8 @@
 ﻿using System;
+using System.Reflection;
+using ABI.CCK.Components;
 using ABI_RC.Core.InteractionSystem;
+using ABI_RC.Core.Savior;
 using cohtml;
 using cohtml.Net;
 using MelonLoader;
@@ -23,10 +26,13 @@ namespace StickyMenu
         private Status InitStatus = Status.NotStarted;
         private CohtmlView MenuView = null;
         private Transform PlayerLocalTransform = null;
-        private ParentConstraint Constraint;
+        private FixedJoint Constraint;
         private int ConstraintSourceIndex;
         private bool Enabled = false;
+        private bool Dragging = false;
         private Config config;
+        private CVRPickupObject Pickupable;
+        private MethodInfo GrabObjectMethod;
 
         public override void OnSceneWasLoaded(int buildIndex, string sceneName)
         {
@@ -57,6 +63,8 @@ namespace StickyMenu
             MethodPatcher.DoPatching();
 
             MenuView.Listener.ReadyForBindings += RegisterEvents;
+
+            GrabObjectMethod = typeof(ControllerRay).GetMethod("GrabObject", BindingFlags.Instance | BindingFlags.NonPublic, null, new Type[] { typeof(CVRPickupObject), typeof(RaycastHit) }, null);
 
             InitStatus = Status.WaitingForEventRegistration;
         }
@@ -92,6 +100,17 @@ namespace StickyMenu
                 MelonLogger.Msg("Instance detail loaded event!");
             }));
 
+            MenuView.View.RegisterForEvent("all", new Action<string, Value[]>((string str, Value[] vals) => MelonLogger.Msg("Button clicked! Str: {0}", str)));
+
+            // Attach a "button clicked" event to all event handlers in 
+            MenuView.View.RegisterForEvent("CVRNoButtonClicked", new Action(() =>
+            {
+                MelonLogger.Msg("No buttons clicked!");
+                GrabStart();
+            }));
+            MethodPatcher.OnMenuMouseUp += GrabEnd;
+
+
             MelonLogger.Msg("Init done!");
 
             InitStatus = Status.Finished;
@@ -99,20 +118,27 @@ namespace StickyMenu
 
         private void SetupConstraint()
         {
-            Constraint = MenuView.gameObject.AddComponent<ParentConstraint>();
+            /*Constraint = MenuView.gameObject.AddComponent<ParentConstraint>();
             Constraint.constraintActive = false;
             Constraint.weight = 1f;
 
-            ConstraintSource source = new ConstraintSource();
-            source.sourceTransform = PlayerLocalTransform;
-            source.weight = 1f;
+            ConstraintSource source = new ConstraintSource
+            {
+                sourceTransform = PlayerLocalTransform,
+                weight = 1f
+            };
             ConstraintSourceIndex = Constraint.AddSource(source);
 
             config.enabled.OnValueChanged += (bool oldVal, bool newVal) =>
             {
                 if (Enabled && newVal)
                     Constraint.constraintActive = Enabled = false;
-            };
+            };*/
+            MenuView.gameObject.GetComponent<MeshCollider>().enabled = false;
+            var collider = MenuView.gameObject.AddComponent<BoxCollider>();
+            collider.size = MenuView.gameObject.GetComponent<MeshRenderer>().bounds.size;
+            MenuView.gameObject.AddComponent<CVRInteractable>();
+            Pickupable = MenuView.gameObject.AddComponent<CVRPickupObject>();
         }
 
         private void EnableConstraint()
@@ -121,15 +147,18 @@ namespace StickyMenu
                 return;
 
             Enabled = true;
+            MelonLogger.Msg("Enabled!");
 
-            Vector3 diffDist = MenuView.transform.position - PlayerLocalTransform.position;
+            /*Vector3 diffDist = MenuView.transform.position - PlayerLocalTransform.position;
             // Convert to local difference (local difference is always a constant, so could replace this computation...)
             diffDist = PlayerLocalTransform.worldToLocalMatrix * diffDist;
             Constraint.SetTranslationOffset(ConstraintSourceIndex, diffDist);
 
             Vector3 diffRot = MenuView.transform.rotation.eulerAngles - PlayerLocalTransform.rotation.eulerAngles;
             Constraint.SetRotationOffset(ConstraintSourceIndex, diffRot);
-            Constraint.constraintActive = true;
+            Constraint.constraintActive = true;*/
+            MelonLogger.Msg("CVR_InteractableManager.enableInteractions: {0}", CVR_InteractableManager.enableInteractions);
+            /*MetaPort.Instance*/
         }
 
         private void DisableConstraint()
@@ -138,7 +167,37 @@ namespace StickyMenu
                 return;
 
             Enabled = false;
-            Constraint.constraintActive = false;
+            MelonLogger.Msg("Disabled!");
+            /*Constraint.constraintActive = false;*/
+        }
+
+        private void GrabStart()
+        {
+            MelonLogger.Msg("Grab start!");
+            MelonLogger.Msg("MethodPatcher.MouseDownOnMenu == {0}", MethodPatcher.MouseDownOnMenu);
+            if (Dragging || !MethodPatcher.MouseDownOnMenu || MethodPatcher.rayInstance is null)
+                return;
+
+            Dragging = true;
+            
+            if (Pickupable is null)
+            {
+                MelonLogger.Error("Pickupable is null!");
+                return;
+            }
+
+            GrabObjectMethod.Invoke(MethodPatcher.rayInstance, new object[] {Pickupable, MethodPatcher.hitInfo});
+        }
+
+        private void GrabEnd()
+        {
+            MelonLogger.Msg("Grab end!");
+            MelonLogger.Msg("MethodPatcher.MouseDownOnMenu == {0}", MethodPatcher.MouseDownOnMenu);
+            if (!Dragging || MethodPatcher.rayInstance is null)
+                return;
+
+            Dragging = false;
+            MethodPatcher.rayInstance.DropObject();
         }
     }
 }
