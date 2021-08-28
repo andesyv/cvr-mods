@@ -1,5 +1,7 @@
 ﻿
 using System;
+using System.Reflection;
+using ABI.CCK.Components;
 using ABI_RC.Core.InteractionSystem;
 using ABI_RC.Core.Savior;
 using HarmonyLib;
@@ -7,92 +9,89 @@ using UnityEngine;
 
 namespace StickyMenu
 {
-    class MethodPatcher
+    internal class MethodPatcher
     {
         public static Action OnMenuEnabled;
         public static Action OnMenuDisabled;
-        public static Action OnMenuMouseDown;
         public static Action OnMenuMouseUp;
         public static bool MouseDownOnMenu = false;
-        public static ControllerRay rayInstance = null;
-        public static RaycastHit hitInfo = new RaycastHit();
+        public static ControllerRay RayInstance = null;
+        public static RaycastHit HitInfo = new RaycastHit();
+        public static MethodInfo GrabObjectMethod;
 
         public static void DoPatching()
         {
             var harmony = new HarmonyLib.Harmony("andough.stickymenu.patch");
             harmony.PatchAll();
+
+            GrabObjectMethod = typeof(ControllerRay).GetMethod("GrabObject", BindingFlags.Instance | BindingFlags.NonPublic, null, new[] { typeof(CVRPickupObject), typeof(RaycastHit)
+            }, null);
         }
     }
 
-    [HarmonyPatch(typeof(ViewManager), "UiStateToggle", new Type[] { typeof(bool) })]
+    [HarmonyPatch(typeof(ViewManager), "UiStateToggle", typeof(bool))]
     public class ViewManagerPatch
     {
         public static void Postfix(bool show)
         {
             var handler = show ? MethodPatcher.OnMenuEnabled : MethodPatcher.OnMenuDisabled;
-            if (handler != null)
-                handler();
+            handler?.Invoke();
         }
     }
 
     [HarmonyPatch(typeof(ControllerRay), "Update")]
     public class ControllerRayPatch
     {
-        private static bool LastMenuHit = false;
-        private static bool LastMouseDown = false;
-        private static bool LastMouseUp = false;
+        private static bool _lastMenuHit = false;
+        private static bool _lastMouseDown = false;
+        private static bool _lastMouseUp = false;
 
-        private static AccessTools.FieldRef<ControllerRay, bool> handRef =
+        private static readonly AccessTools.FieldRef<ControllerRay, bool> HandRef =
             AccessTools.FieldRefAccess<ControllerRay, bool>("hand");
 
         public static void Prefix(ControllerRay __instance)
         {
-            MethodPatcher.rayInstance = __instance;
-            var MenuHit = !(ViewManager.Instance.uiCollider is null) && ViewManager.Instance.uiCollider.Raycast(
-                new Ray(__instance.transform.position, __instance.transform.TransformDirection(__instance.RayDirection)), out MethodPatcher.hitInfo,
+            MethodPatcher.RayInstance = __instance;
+            var menuHit = !(ViewManager.Instance.uiCollider is null) && ViewManager.Instance.uiCollider.Raycast(
+                new Ray(__instance.transform.position, __instance.transform.TransformDirection(__instance.RayDirection)), out MethodPatcher.HitInfo,
                 1000f);
-            var FocusAwayFromMenu = LastMenuHit && !MenuHit;
-            LastMenuHit = MenuHit;
+            _lastMenuHit = menuHit;
 
-            /// If dragging, raytracing will always fail, so just go by the input instead.
-            var down = StickyMenuMod.Dragging ? MouseDown(__instance) : (MenuHit && MouseDown(__instance));
-            var up = StickyMenuMod.Dragging ? MouseUp(__instance) : (!MenuHit || MouseUp(__instance));
+            // If dragging, ray tracing will always fail, so just go by the input instead.
+            var down = StickyMenuMod.Dragging ? MouseDown(__instance) : (menuHit && MouseDown(__instance));
+            var up = StickyMenuMod.Dragging ? MouseUp(__instance) : (!menuHit || MouseUp(__instance));
 
-            var pressed = !LastMouseDown && down;
-            var released = !down && !LastMouseUp && up;
+            var pressed = !_lastMouseDown && down;
+            var released = !down && !_lastMouseUp && up;
 
 
-            LastMouseDown = down;
-            LastMouseUp = up;
+            _lastMouseDown = down;
+            _lastMouseUp = up;
 
             if (pressed)
             {
                 MethodPatcher.MouseDownOnMenu = true;
-                var handler = MethodPatcher.OnMenuMouseDown;
-                if (handler != null)
-                    handler();
             }
 
             if (released)
             {
                 MethodPatcher.MouseDownOnMenu = false;
                 var handler = MethodPatcher.OnMenuMouseUp;
-                if (handler != null)
-                    handler();
+                handler?.Invoke();
             }
         }
 
         private static bool MouseDown(ControllerRay __instance)
         {
-            var hand = handRef(__instance);
+            var hand = HandRef(__instance);
             return (hand ? CVRInputManager.Instance.interactLeftDown : CVRInputManager.Instance.interactRightDown) ||
-                   ((double)(hand ? CVRInputManager.Instance.interactLeftValue : CVRInputManager.Instance.interactRightValue) > 0.800000011920929) ||
+                   (hand ? CVRInputManager.Instance.interactLeftValue : CVRInputManager.Instance.interactRightValue) > 0.800000011920929 ||
                    (hand ? CVRInputManager.Instance.gripLeftDown : CVRInputManager.Instance.gripRightDown);
         }
 
         private static bool MouseUp(ControllerRay __instance)
         {
-            var hand = handRef(__instance);
+            var hand = HandRef(__instance);
             return (hand ? CVRInputManager.Instance.interactLeftUp : CVRInputManager.Instance.interactRightUp) ||
                    (hand ? CVRInputManager.Instance.gripLeftUp : CVRInputManager.Instance.gripRightUp);
         }

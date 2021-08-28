@@ -1,26 +1,20 @@
 ﻿using System;
+using System.Linq;
 using UnityEngine;
+using Object = UnityEngine.Object;
 
 namespace StickyMenu
 {
-    class PersistentObjectFinder
+    internal class PersistentObjectFinder
     {
-        private static PersistentObjectFinder instance = null;
-        private GameObject spy;
-        private static PersistentObjectFinder Instance
-        {
-            get
-            {
-                if (instance is null)
-                    instance = new PersistentObjectFinder();
-                return instance;
-            }
-        }
+        private static PersistentObjectFinder _instance = null;
+        private GameObject _spy;
+        private static PersistentObjectFinder Instance => _instance ?? (_instance = new PersistentObjectFinder());
 
         private PersistentObjectFinder()
         {
-            spy = new GameObject("PersistentObjectFinder");
-            GameObject.DontDestroyOnLoad(spy);
+            _spy = new GameObject("PersistentObjectFinder");
+            Object.DontDestroyOnLoad(_spy);
         }
 
         public static GameObject Find(string name, StringComparison stringComparisonType = StringComparison.Ordinal)
@@ -28,23 +22,20 @@ namespace StickyMenu
             var result = Instance.FindLocal(name, stringComparisonType);
             // Most likely just going to use finder until we find something, so clean up afterwards
             if (!(result is null))
-                instance = null;
+                _instance = null;
             return result;
         }
 
         private GameObject FindLocal(string name, StringComparison stringComparisonType = StringComparison.Ordinal)
         {
-            var roots = spy.scene.GetRootGameObjects();
-            foreach (var obj in roots)
-                if (obj != spy && String.Equals(obj.name, name, stringComparisonType))
-                    return obj;
-            return null;
+            var roots = _spy.scene.GetRootGameObjects();
+            return roots.FirstOrDefault(obj => obj != _spy && string.Equals(obj.name, name, stringComparisonType));
         }
 
         ~PersistentObjectFinder()
         {
-            GameObject.Destroy(spy);
-            spy = null;
+            Object.Destroy(_spy);
+            _spy = null;
         }
     }
 }

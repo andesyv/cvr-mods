@@ -1,32 +1,31 @@
-﻿using System;
-using MelonLoader;
+﻿using MelonLoader;
 
 namespace StickyMenu
 {
-    class Config
+    internal class Config
     {
-        private MelonPreferences_Category generalCategory;
-        public MelonPreferences_Entry<bool> enabled;
-        public MelonPreferences_Entry<bool> lockPosition;
-        public MelonPreferences_Entry<bool> lockRotation;
-        public MelonPreferences_Entry<bool> enableDragging;
+        private readonly MelonPreferences_Category _generalCategory;
+        public MelonPreferences_Entry<bool> Enabled;
+        public MelonPreferences_Entry<bool> LockPosition;
+        public MelonPreferences_Entry<bool> LockRotation;
+        public MelonPreferences_Entry<bool> EnableDragging;
 
         public Config()
         {
-            generalCategory = MelonPreferences.CreateCategory("StickyMenu", "StickyMenu");
-            generalCategory.LoadFromFile();
+            _generalCategory = MelonPreferences.CreateCategory("StickyMenu", "StickyMenu");
+            _generalCategory.LoadFromFile();
 
-            enabled = generalCategory.CreateEntry("Enabled", true);
-            lockPosition = generalCategory.CreateEntry("LockMenuPosition", true);
-            lockRotation = generalCategory.CreateEntry("LockMenuRotation", true);
-            enableDragging = generalCategory.CreateEntry("EnableMenuDragging", true);
+            Enabled = _generalCategory.CreateEntry("Enabled", true);
+            LockPosition = _generalCategory.CreateEntry("LockMenuPosition", true);
+            LockRotation = _generalCategory.CreateEntry("LockMenuRotation", true);
+            EnableDragging = _generalCategory.CreateEntry("EnableMenuDragging", true);
 
-            generalCategory.SaveToFile(false);
+            _generalCategory.SaveToFile(false);
         }
 
         ~Config()
         {
-            generalCategory.SaveToFile();
+            _generalCategory.SaveToFile();
         }
     }
 }
