@@ -23,6 +23,13 @@ namespace StickyMenu
             Finished
         }
 
+        internal struct Offset
+        {
+            public Vector3 position;
+            public Vector3 localPosition;
+            public Quaternion rotation;
+        }
+
         private Status InitStatus = Status.NotStarted;
         private CohtmlView MenuView = null;
         private Transform PlayerLocalTransform = null;
@@ -31,6 +38,7 @@ namespace StickyMenu
         private Config config;
         private CVRPickupObject Pickupable;
         private MethodInfo GrabObjectMethod;
+        private Offset offset;
 
         public override void OnSceneWasLoaded(int buildIndex, string sceneName)
         {
@@ -116,9 +124,6 @@ namespace StickyMenu
 
         private void SetupConstraint()
         {
-            // Simply parent for now (could create some better logic in terms of rotation and translation in future)
-            MenuView.transform.parent = PlayerLocalTransform;
-
             var collider = MenuView.gameObject.GetComponent<MeshCollider>();
             collider.enabled = true;
             collider.convex = false;
@@ -137,35 +142,31 @@ namespace StickyMenu
 
             Enabled = true;
             MelonLogger.Msg("Enabled!");
-            
 
-            /*Vector3 diffDist = MenuView.transform.position - PlayerLocalTransform.position;
-            // Convert to local difference (local difference is always a constant, so could replace this computation...)
-            diffDist = PlayerLocalTransform.worldToLocalMatrix * diffDist;
-            Constraint.SetTranslationOffset(ConstraintSourceIndex, diffDist);
+            UpdateOffset();
+        }
 
-            Vector3 diffRot = MenuView.transform.rotation.eulerAngles - PlayerLocalTransform.rotation.eulerAngles;
-            Constraint.SetRotationOffset(ConstraintSourceIndex, diffRot);
-            Constraint.constraintActive = true;*/
-            MelonLogger.Msg("CVR_InteractableManager.enableInteractions: {0}", CVR_InteractableManager.enableInteractions);
-            /*MetaPort.Instance*/
+        private void UpdateOffset()
+        {
+            offset.position = MenuView.transform.position - PlayerLocalTransform.position;
+            offset.localPosition = PlayerLocalTransform.InverseTransformVector(offset.position);
+            offset.rotation = PlayerLocalTransform.rotation * Quaternion.Inverse(MenuView.transform.rotation);
         }
 
         private void DisableConstraint()
         {
-            if (!Enabled || !config.enabled.Value)
+            if (!Enabled)
                 return;
 
             Enabled = false;
             MelonLogger.Msg("Disabled!");
-            /*Constraint.constraintActive = false;*/
         }
 
         private void GrabStart()
         {
             MelonLogger.Msg("Grab start!");
             MelonLogger.Msg("MethodPatcher.MouseDownOnMenu == {0}", MethodPatcher.MouseDownOnMenu);
-            if (Dragging || !MethodPatcher.MouseDownOnMenu || MethodPatcher.rayInstance is null)
+            if (Dragging || !config.enableDragging.Value || !MethodPatcher.MouseDownOnMenu || MethodPatcher.rayInstance is null)
                 return;
 
             Dragging = true;
@@ -188,6 +189,23 @@ namespace StickyMenu
 
             Dragging = false;
             MethodPatcher.rayInstance.DropObject();
+            
+            UpdateOffset();
+        }
+
+        public override void OnFixedUpdate()
+        {
+            if (!Enabled || Dragging || InitStatus != Status.Finished || !config.enabled.Value)
+                return;
+
+            var posOffset = config.lockRotation.Value
+                ? PlayerLocalTransform.TransformVector(offset.localPosition)
+                : offset.position;
+            if (config.lockPosition.Value)
+                MenuView.transform.position = PlayerLocalTransform.position + posOffset;
+
+            if (config.lockRotation.Value)
+                MenuView.transform.rotation = offset.rotation * PlayerLocalTransform.rotation;
         }
     }
 }

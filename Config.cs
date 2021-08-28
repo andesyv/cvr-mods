@@ -7,8 +7,9 @@ namespace StickyMenu
     {
         private MelonPreferences_Category generalCategory;
         public MelonPreferences_Entry<bool> enabled;
-        /*public MelonPreferences_Entry<bool> constrainPosition;
-        public MelonPreferences_Entry<bool> constrainRotation;*/
+        public MelonPreferences_Entry<bool> lockPosition;
+        public MelonPreferences_Entry<bool> lockRotation;
+        public MelonPreferences_Entry<bool> enableDragging;
 
         public Config()
         {
@@ -16,8 +17,9 @@ namespace StickyMenu
             generalCategory.LoadFromFile();
 
             enabled = generalCategory.CreateEntry("Enabled", true);
-            /*constrainPosition = generalCategory.CreateEntry("Constrain position", true);
-            constrainRotation = generalCategory.CreateEntry("Constrain rotation", true);*/
+            lockPosition = generalCategory.CreateEntry("LockMenuPosition", true);
+            lockRotation = generalCategory.CreateEntry("LockMenuRotation", true);
+            enableDragging = generalCategory.CreateEntry("EnableMenuDragging", true);
 
             generalCategory.SaveToFile(false);
         }
