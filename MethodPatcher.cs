@@ -29,10 +29,9 @@ namespace StickyMenu
     {
         public static void Postfix(bool show)
         {
-            if (show)
-                MethodPatcher.OnMenuEnabled();
-            else
-                MethodPatcher.OnMenuDisabled();
+            var handler = show ? MethodPatcher.OnMenuEnabled : MethodPatcher.OnMenuDisabled;
+            if (handler != null)
+                handler();
         }
     }
 

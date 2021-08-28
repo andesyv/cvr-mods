@@ -26,8 +26,6 @@ namespace StickyMenu
         private Status InitStatus = Status.NotStarted;
         private CohtmlView MenuView = null;
         private Transform PlayerLocalTransform = null;
-        private FixedJoint Constraint;
-        private int ConstraintSourceIndex;
         private bool Enabled = false;
         public static bool Dragging = false;
         private Config config;
@@ -118,27 +116,18 @@ namespace StickyMenu
 
         private void SetupConstraint()
         {
-            /*Constraint = MenuView.gameObject.AddComponent<ParentConstraint>();
-            Constraint.constraintActive = false;
-            Constraint.weight = 1f;
+            // Simply parent for now (could create some better logic in terms of rotation and translation in future)
+            MenuView.transform.parent = PlayerLocalTransform;
 
-            ConstraintSource source = new ConstraintSource
-            {
-                sourceTransform = PlayerLocalTransform,
-                weight = 1f
-            };
-            ConstraintSourceIndex = Constraint.AddSource(source);
-
-            config.enabled.OnValueChanged += (bool oldVal, bool newVal) =>
-            {
-                if (Enabled && newVal)
-                    Constraint.constraintActive = Enabled = false;
-            };*/
-            MenuView.gameObject.GetComponent<MeshCollider>().enabled = false;
-            var collider = MenuView.gameObject.AddComponent<BoxCollider>();
-            collider.size = MenuView.gameObject.GetComponent<MeshRenderer>().bounds.size;
+            var collider = MenuView.gameObject.GetComponent<MeshCollider>();
+            collider.enabled = true;
+            collider.convex = false;
+            // TODO: Find a way to either use convex mesh collider, force rigidbody as kinematic, or use another collider in menu raytrace
+            /*var collider = MenuView.gameObject.AddComponent<BoxCollider>();
+            collider.size = MenuView.gameObject.GetComponent<MeshRenderer>().bounds.size;*/
             MenuView.gameObject.AddComponent<CVRInteractable>();
             Pickupable = MenuView.gameObject.AddComponent<CVRPickupObject>();
+            MenuView.gameObject.GetComponent<Rigidbody>().isKinematic = true;
         }
 
         private void EnableConstraint()
@@ -148,6 +137,7 @@ namespace StickyMenu
 
             Enabled = true;
             MelonLogger.Msg("Enabled!");
+            
 
             /*Vector3 diffDist = MenuView.transform.position - PlayerLocalTransform.position;
             // Convert to local difference (local difference is always a constant, so could replace this computation...)
