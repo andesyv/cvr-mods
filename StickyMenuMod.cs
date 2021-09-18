@@ -31,10 +31,21 @@ namespace StickyMenu
         private CohtmlView _menuView = null;
         private Transform _playerLocalTransform = null;
         private bool _enabled = false;
-        public static bool Dragging = false;
         private Config _config;
         private CVRPickupObject _pickupable;
         private Offset _offset;
+        private static StickyMenuMod _instance;
+
+        public static bool Dragging = false;
+        public Config Config => _config;
+        public BoxCollider DragCollider = null;
+        public static StickyMenuMod Instance => _instance;
+
+
+        private StickyMenuMod()
+        {
+            _instance = this;
+        }
 
         public override void OnSceneWasLoaded(int buildIndex, string sceneName)
         {
@@ -92,11 +103,19 @@ namespace StickyMenu
             }));
 
             _menuView.View.RegisterForEvent("all", new Action<string, Value[]>((string str, Value[] values) => MelonLogger.Msg("Button clicked! Str: {0}", str)));
-            _menuView.View.RegisterForEvent("CVRNoButtonClicked", new Action(() =>
+            if (Config.UseEdgeDragging.Value)
             {
-                MelonLogger.Msg("No buttons clicked!");
-                GrabStart();
-            }));
+                MethodPatcher.OnMenuMouseDown += GrabStart;
+            }
+            else
+            {
+                _menuView.View.RegisterForEvent("CVRNoButtonClicked", new Action(() =>
+                {
+                    MelonLogger.Msg("No buttons clicked!");
+                    GrabStart();
+                }));
+            }
+            
             MethodPatcher.OnMenuMouseUp += GrabEnd;
 
 
@@ -110,12 +129,14 @@ namespace StickyMenu
             var collider = _menuView.gameObject.GetComponent<MeshCollider>();
             collider.enabled = true;
             collider.convex = false;
-            // TODO: Find a way to either use convex mesh collider, force rigidbody as kinematic, or use another collider in menu raytrace
-            /*var collider = MenuView.gameObject.AddComponent<BoxCollider>();
-            collider.size = MenuView.gameObject.GetComponent<MeshRenderer>().bounds.size;*/
+            DragCollider = _menuView.gameObject.AddComponent<BoxCollider>();
+            DragCollider.isTrigger = true;
+            var innerBounds = _menuView.gameObject.GetComponent<MeshRenderer>().bounds.size;
+            DragCollider.size = new Vector3(innerBounds.x * 0.7F, innerBounds.y * 1.3F, 0.2F);
             _menuView.gameObject.AddComponent<CVRInteractable>();
             _pickupable = _menuView.gameObject.AddComponent<CVRPickupObject>();
             _menuView.gameObject.GetComponent<Rigidbody>().isKinematic = true;
+            DragCollider.enabled = Config.UseEdgeDragging.Value;
         }
 
         private void EnableConstraint()
@@ -159,7 +180,7 @@ namespace StickyMenu
 
             Dragging = false;
             MethodPatcher.RayInstance.DropObject();
-            
+
             UpdateOffset();
         }
 

@@ -5,6 +5,7 @@ using ABI.CCK.Components;
 using ABI_RC.Core.InteractionSystem;
 using ABI_RC.Core.Savior;
 using HarmonyLib;
+using MelonLoader;
 using UnityEngine;
 
 namespace StickyMenu
@@ -14,6 +15,7 @@ namespace StickyMenu
         public static Action OnMenuEnabled;
         public static Action OnMenuDisabled;
         public static Action OnMenuMouseUp;
+        public static Action OnMenuMouseDown;
         public static bool MouseDownOnMenu = false;
         public static ControllerRay RayInstance = null;
         public static RaycastHit HitInfo = new RaycastHit();
@@ -51,11 +53,28 @@ namespace StickyMenu
 
         public static void Prefix(ControllerRay __instance)
         {
+            if (StickyMenuMod.Instance is null)
+                throw new NullReferenceException("StickyMenuMod.Instance is null!");
+
             MethodPatcher.RayInstance = __instance;
-            var menuHit = !(ViewManager.Instance.uiCollider is null) && ViewManager.Instance.uiCollider.Raycast(
-                new Ray(__instance.transform.position, __instance.transform.TransformDirection(__instance.RayDirection)), out MethodPatcher.HitInfo,
-                1000f);
-            _lastMenuHit = menuHit;
+            var useEdgeDragging = StickyMenuMod.Instance.Config.UseEdgeDragging.Value;
+
+            var menuHit = ViewManager.Instance.uiCollider?.Raycast(
+                new Ray(__instance.transform.position,
+                    __instance.transform.TransformDirection(__instance.RayDirection)), out MethodPatcher.HitInfo,
+                1000f) ?? false;
+
+            if (StickyMenuMod.Instance.Config.UseEdgeDragging.Value)
+            {
+                // If we're using edgeDragging, only count as hits when we hit the outer collider AND not the inner
+                menuHit = !menuHit && StickyMenuMod.Instance.DragCollider.Raycast(
+                    new Ray(__instance.transform.position,
+                        __instance.transform.TransformDirection(__instance.RayDirection)),
+                    out MethodPatcher.HitInfo,
+                    1000f);
+            }
+
+            //_lastMenuHit = menuHit;
 
             // If dragging, ray tracing will always fail, so just go by the input instead.
             var down = StickyMenuMod.Dragging ? MouseDown(__instance) : (menuHit && MouseDown(__instance));
@@ -70,11 +89,15 @@ namespace StickyMenu
 
             if (pressed)
             {
+                MelonLogger.Msg("Pressed!");
                 MethodPatcher.MouseDownOnMenu = true;
+                var handler = MethodPatcher.OnMenuMouseDown;
+                handler?.Invoke();
             }
 
             if (released)
             {
+                MelonLogger.Msg("Released");
                 MethodPatcher.MouseDownOnMenu = false;
                 var handler = MethodPatcher.OnMenuMouseUp;
                 handler?.Invoke();

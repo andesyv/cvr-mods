@@ -2,13 +2,14 @@
 
 namespace StickyMenu
 {
-    internal class Config
+    public class Config
     {
         private readonly MelonPreferences_Category _generalCategory;
         public MelonPreferences_Entry<bool> Enabled;
         public MelonPreferences_Entry<bool> LockPosition;
         public MelonPreferences_Entry<bool> LockRotation;
         public MelonPreferences_Entry<bool> EnableDragging;
+        public MelonPreferences_Entry<bool> UseEdgeDragging;
 
         public Config()
         {
@@ -19,6 +20,7 @@ namespace StickyMenu
             LockPosition = _generalCategory.CreateEntry("LockMenuPosition", true);
             LockRotation = _generalCategory.CreateEntry("LockMenuRotation", true);
             EnableDragging = _generalCategory.CreateEntry("EnableMenuDragging", true);
+            UseEdgeDragging = _generalCategory.CreateEntry("UseEdgeDragging", true);
 
             _generalCategory.SaveToFile(false);
         }
