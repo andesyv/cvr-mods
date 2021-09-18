@@ -5,7 +5,6 @@ using ABI.CCK.Components;
 using ABI_RC.Core.InteractionSystem;
 using ABI_RC.Core.Savior;
 using HarmonyLib;
-using MelonLoader;
 using UnityEngine;
 
 namespace StickyMenu
@@ -44,7 +43,6 @@ namespace StickyMenu
     [HarmonyPatch(typeof(ControllerRay), "Update")]
     public class ControllerRayPatch
     {
-        private static bool _lastMenuHit = false;
         private static bool _lastMouseDown = false;
         private static bool _lastMouseUp = false;
 
@@ -57,7 +55,6 @@ namespace StickyMenu
                 throw new NullReferenceException("StickyMenuMod.Instance is null!");
 
             MethodPatcher.RayInstance = __instance;
-            var useEdgeDragging = StickyMenuMod.Instance.Config.UseEdgeDragging.Value;
 
             var menuHit = ViewManager.Instance.uiCollider?.Raycast(
                 new Ray(__instance.transform.position,
@@ -74,8 +71,6 @@ namespace StickyMenu
                     1000f);
             }
 
-            //_lastMenuHit = menuHit;
-
             // If dragging, ray tracing will always fail, so just go by the input instead.
             var down = StickyMenuMod.Dragging ? MouseDown(__instance) : (menuHit && MouseDown(__instance));
             var up = StickyMenuMod.Dragging ? MouseUp(__instance) : (!menuHit || MouseUp(__instance));
@@ -89,7 +84,6 @@ namespace StickyMenu
 
             if (pressed)
             {
-                MelonLogger.Msg("Pressed!");
                 MethodPatcher.MouseDownOnMenu = true;
                 var handler = MethodPatcher.OnMenuMouseDown;
                 handler?.Invoke();
@@ -97,7 +91,6 @@ namespace StickyMenu
 
             if (released)
             {
-                MelonLogger.Msg("Released");
                 MethodPatcher.MouseDownOnMenu = false;
                 var handler = MethodPatcher.OnMenuMouseUp;
                 handler?.Invoke();

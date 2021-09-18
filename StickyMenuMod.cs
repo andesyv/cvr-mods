@@ -59,7 +59,7 @@ namespace StickyMenu
                 return;
 
             if (_menuView is null)
-                _menuView = FindMainMenuview();
+                _menuView = FindMainMenuView();
 
             if (_playerLocalTransform is null)
                 _playerLocalTransform = FindPlayerTransform();
@@ -80,7 +80,7 @@ namespace StickyMenu
             _initStatus = Status.WaitingForEventRegistration;
         }
 
-        private static CohtmlView FindMainMenuview()
+        private static CohtmlView FindMainMenuView()
         {
             var objects = UnityEngine.Object.FindObjectsOfType<CohtmlView>();
             return objects.FirstOrDefault(view => string.Equals(view.gameObject.name, MainMenuViewName, StringComparison.OrdinalIgnoreCase));
@@ -97,23 +97,14 @@ namespace StickyMenu
             if (_menuView is null || !_menuView.View.IsReadyForBindings())
                 return;
 
-            _menuView.View.RegisterForEvent("LoadInstanceDetails", new Action(() =>
-            {
-                MelonLogger.Msg("Instance detail loaded event!");
-            }));
-
-            _menuView.View.RegisterForEvent("all", new Action<string, Value[]>((string str, Value[] values) => MelonLogger.Msg("Button clicked! Str: {0}", str)));
+            //_menuView.View.RegisterForEvent("all", new Action<string, Value[]>((string str, Value[] values) => MelonLogger.Msg("Button clicked! Str: {0}", str)));
             if (Config.UseEdgeDragging.Value)
             {
                 MethodPatcher.OnMenuMouseDown += GrabStart;
             }
             else
             {
-                _menuView.View.RegisterForEvent("CVRNoButtonClicked", new Action(() =>
-                {
-                    MelonLogger.Msg("No buttons clicked!");
-                    GrabStart();
-                }));
+                _menuView.View.RegisterForEvent("CVRNoButtonClicked", new Action(GrabStart));
             }
             
             MethodPatcher.OnMenuMouseUp += GrabEnd;
