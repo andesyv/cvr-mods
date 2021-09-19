@@ -5,6 +5,7 @@ using ABI.CCK.Components;
 using ABI_RC.Core.InteractionSystem;
 using ABI_RC.Core.Savior;
 using HarmonyLib;
+using MelonLoader;
 using UnityEngine;
 
 namespace StickyMenu
@@ -14,7 +15,7 @@ namespace StickyMenu
         public static Action OnMenuEnabled;
         public static Action OnMenuDisabled;
         public static Action OnMenuMouseUp;
-        public static Action OnMenuMouseDown;
+        public static Action OnGrabMenu;
         public static bool MouseDownOnMenu = false;
         public static ControllerRay RayInstance = null;
         public static RaycastHit HitInfo = new RaycastHit();
@@ -25,8 +26,11 @@ namespace StickyMenu
             var harmony = new HarmonyLib.Harmony("andough.stickymenu.patch");
             harmony.PatchAll();
 
-            GrabObjectMethod = typeof(ControllerRay).GetMethod("GrabObject", BindingFlags.Instance | BindingFlags.NonPublic, null, new[] { typeof(CVRPickupObject), typeof(RaycastHit)
-            }, null);
+            GrabObjectMethod = typeof(ControllerRay).GetMethod("GrabObject",
+                BindingFlags.Instance | BindingFlags.NonPublic, null, new[]
+                {
+                    typeof(CVRPickupObject), typeof(RaycastHit)
+                }, null);
         }
     }
 
@@ -41,7 +45,7 @@ namespace StickyMenu
     }
 
     [HarmonyPatch(typeof(ControllerRay), "Update")]
-    public class ControllerRayPatch
+    public class ControllerRayUpdatePatch
     {
         private static bool _lastMouseDown = false;
         private static bool _lastMouseUp = false;
@@ -85,8 +89,6 @@ namespace StickyMenu
             if (pressed)
             {
                 MethodPatcher.MouseDownOnMenu = true;
-                var handler = MethodPatcher.OnMenuMouseDown;
-                handler?.Invoke();
             }
 
             if (released)
@@ -101,7 +103,8 @@ namespace StickyMenu
         {
             var hand = HandRef(__instance);
             return (hand ? CVRInputManager.Instance.interactLeftDown : CVRInputManager.Instance.interactRightDown) ||
-                   (hand ? CVRInputManager.Instance.interactLeftValue : CVRInputManager.Instance.interactRightValue) > 0.800000011920929 ||
+                   (hand ? CVRInputManager.Instance.interactLeftValue : CVRInputManager.Instance.interactRightValue) >
+                   0.800000011920929 ||
                    (hand ? CVRInputManager.Instance.gripLeftDown : CVRInputManager.Instance.gripRightDown);
         }
 
@@ -110,6 +113,18 @@ namespace StickyMenu
             var hand = HandRef(__instance);
             return (hand ? CVRInputManager.Instance.interactLeftUp : CVRInputManager.Instance.interactRightUp) ||
                    (hand ? CVRInputManager.Instance.gripLeftUp : CVRInputManager.Instance.gripRightUp);
+        }
+    }
+
+    [HarmonyPatch(typeof(ControllerRay), "GrabObject", new Type[] {typeof(CVRPickupObject), typeof(RaycastHit)})]
+    public class ControllerRayGrabObjectPatch
+    {
+        public static void Postfix(CVRPickupObject pickup, RaycastHit hit)
+        {
+            if (hit.collider != StickyMenuMod.Instance.DragCollider) return;
+
+            var handler = MethodPatcher.OnGrabMenu;
+            handler?.Invoke();
         }
     }
 }

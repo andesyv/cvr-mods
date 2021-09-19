@@ -34,17 +34,16 @@ namespace StickyMenu
         private Config _config;
         private CVRPickupObject _pickupable;
         private Offset _offset;
-        private static StickyMenuMod _instance;
 
         public static bool Dragging = false;
         public Config Config => _config;
         public BoxCollider DragCollider = null;
-        public static StickyMenuMod Instance => _instance;
+        public static StickyMenuMod Instance { get; private set; }
 
 
         private StickyMenuMod()
         {
-            _instance = this;
+            Instance = this;
         }
 
         public override void OnSceneWasLoaded(int buildIndex, string sceneName)
@@ -96,11 +95,10 @@ namespace StickyMenu
         {
             if (_menuView is null || !_menuView.View.IsReadyForBindings())
                 return;
-
-            //_menuView.View.RegisterForEvent("all", new Action<string, Value[]>((string str, Value[] values) => MelonLogger.Msg("Button clicked! Str: {0}", str)));
+            
             if (Config.UseEdgeDragging.Value)
             {
-                MethodPatcher.OnMenuMouseDown += GrabStart;
+                MethodPatcher.OnGrabMenu += GrabStart;
             }
             else
             {
@@ -127,7 +125,7 @@ namespace StickyMenu
             _menuView.gameObject.AddComponent<CVRInteractable>();
             _pickupable = _menuView.gameObject.AddComponent<CVRPickupObject>();
             _menuView.gameObject.GetComponent<Rigidbody>().isKinematic = true;
-            DragCollider.enabled = Config.UseEdgeDragging.Value;
+            DragCollider.enabled = false;
         }
 
         private void EnableConstraint()
@@ -136,6 +134,7 @@ namespace StickyMenu
                 return;
 
             _enabled = true;
+            DragCollider.enabled = true;
 
             UpdateOffset();
         }
@@ -146,6 +145,7 @@ namespace StickyMenu
                 return;
 
             _enabled = false;
+            DragCollider.enabled = false;
         }
 
         private void GrabStart()
@@ -161,7 +161,8 @@ namespace StickyMenu
                 return;
             }
 
-            MethodPatcher.GrabObjectMethod.Invoke(MethodPatcher.RayInstance, new object[] {_pickupable, MethodPatcher.HitInfo});
+            if (!_config.UseEdgeDragging.Value)
+                MethodPatcher.GrabObjectMethod.Invoke(MethodPatcher.RayInstance, new object[] {_pickupable, MethodPatcher.HitInfo});
         }
 
         private void GrabEnd()
