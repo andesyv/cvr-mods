@@ -1,6 +1,8 @@
 # Sticky Menu
 A small ChilloutVR mod that makes the menu follow your view. It also enables you to grab the menu as a prop and position the menu around in space. Uses [MelonLoader](https://github.com/LavaGang/MelonLoader).
 
+**Note:** Menu position / rotation locking is currently broken for VR. Working on it.
+
 ## Installing
 Just add the dll file to the mods folder.
 
@@ -20,6 +22,12 @@ And overview of the configurations for the mod:
 | LockMenuRotation      | `true`    | Whether to lock the menus rotation to the player |
 | EnableMenuDragging    | `true`    | Whether to enable dragging the menu by grabbing it |
 | UseEdgeDragging       | `true`    | Whether to drag by grabbing the edge. The alternative is using the JavaScript event. See [Dragging](##dragging).
+
+## Disclaimer
+
+This modification is unofficial and not supported by Alpha Blend Interactive. Using this modification might cause issues with performance, security or stability of the games.
+
+I too am in no way affiliated with or supported by Alpha Blend Interactive and I take no responsibilities for any harm done by this mod. Use at your own risk.
 
 ## Licence
 MIT
