@@ -1,14 +1,17 @@
 ﻿using System;
 using System.Linq;
 using ABI.CCK.Components;
+using BepInEx;
 using cohtml;
 using cohtml.Net;
-using MelonLoader;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace StickyMenu
 {
-    public class StickyMenuMod : MelonMod
+    [BepInPlugin("dev.syvertsen.plugins.stickymenu", "Sticky Menu", "2.0.0")]
+    [BepInProcess("ChilloutVR.exe")]
+    public class StickyMenuMod : BaseUnityPlugin
     {
         private const string MainMenuViewName = "CohtmlWorldView";
         private const string PlayerLocalTransformName = "_PLAYERLOCAL";
@@ -40,16 +43,19 @@ namespace StickyMenu
         public BoxCollider DragCollider = null;
         public static StickyMenuMod Instance { get; private set; }
 
-
-        private StickyMenuMod()
+        private void Awake()
         {
             Instance = this;
+
+            // Attempt to init every time we load a scene until we have successfully initialized
+            SceneManager.sceneLoaded += OnSceneWasLoaded;
         }
 
-        public override void OnSceneWasLoaded(int buildIndex, string sceneName)
+        public void OnSceneWasLoaded(Scene scene, LoadSceneMode mode)
         {
-            base.OnSceneWasLoaded(buildIndex, sceneName);
             Init();
+            if (_initStatus == Status.Finished)
+                SceneManager.sceneLoaded -= OnSceneWasLoaded;
         }
 
         private void Init()
@@ -108,7 +114,7 @@ namespace StickyMenu
             MethodPatcher.OnMenuMouseUp += GrabEnd;
 
 
-            MelonLogger.Msg("Init done!");
+            Logger.LogInfo("Init done!");
 
             _initStatus = Status.Finished;
         }
@@ -157,7 +163,7 @@ namespace StickyMenu
             
             if (_pickupable is null)
             {
-                MelonLogger.Error("_pickupable is null!");
+                Logger.LogError("_pickupable is null!");
                 return;
             }
 
@@ -183,7 +189,7 @@ namespace StickyMenu
             _offset.Rotation = _playerLocalTransform.rotation * Quaternion.Inverse(_menuView.transform.rotation);
         }
 
-        public override void OnFixedUpdate()
+        private void FixedUpdate()
         {
             if (!_enabled || Dragging || _initStatus != Status.Finished || !_config.Enabled.Value)
                 return;

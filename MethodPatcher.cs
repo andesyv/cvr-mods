@@ -23,7 +23,7 @@ namespace StickyMenu
 
         public static void DoPatching()
         {
-            var harmony = new HarmonyLib.Harmony("andough.stickymenu.patch");
+            var harmony = new HarmonyLib.Harmony("dev.syvertsen.plugins.stickymenu.patch");
             harmony.PatchAll();
 
             GrabObjectMethod = typeof(ControllerRay).GetMethod("GrabObject",
