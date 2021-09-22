@@ -2,7 +2,9 @@
 
   <PropertyGroup>
     <TargetFramework>net5.0</TargetFramework>
+    <OutputPath>bin/$(Configuration)</OutputPath>
     <ChilloutVRRoot Condition="'$(ChilloutVRRoot)' == ''">$(STEAMROOT)\steamapps\common\ChilloutVR</ChilloutVRRoot>
+    <PostBuildEvent>copy /y "$(MSBuildProjectDirectory)\$(OutputPath)\$(TargetFramework)\StickyMenu.dll" "$(ChilloutVRRoot)\BepInEx\scripts\"</PostBuildEvent>
   </PropertyGroup>
 
   <ItemGroup>
@@ -31,10 +33,12 @@
       <SpecificVersion>False</SpecificVersion>
       <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\UnityEngine.PhysicsModule.dll</HintPath>
     </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(ChilloutVRRoot)\BepInEx\core\0Harmony.dll</HintPath>
+    </Reference>
+    <Reference Include="BepInEx.Harmony">
+      <HintPath>$(ChilloutVRRoot)\BepInEx\core\BepInEx.Harmony.dll</HintPath>
+    </Reference>
   </ItemGroup>
-
-  <PropertyGroup>
-    <PostBuildEvent>copy /y "$(TargetPath)" "$(ChilloutVRRoot)\BepInEx\scripts\"</PostBuildEvent>
-  </PropertyGroup>
 
 </Project>

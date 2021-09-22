@@ -5,7 +5,6 @@ using ABI.CCK.Components;
 using ABI_RC.Core.InteractionSystem;
 using ABI_RC.Core.Savior;
 using HarmonyLib;
-using MelonLoader;
 using UnityEngine;
 
 namespace StickyMenu
@@ -65,7 +64,7 @@ namespace StickyMenu
                     __instance.transform.TransformDirection(__instance.RayDirection)), out MethodPatcher.HitInfo,
                 1000f) ?? false;
 
-            if (StickyMenuMod.Instance.Config.UseEdgeDragging.Value)
+            if (StickyMenuMod.Instance.StickyMenuConfig.UseEdgeDragging.Value)
             {
                 // If we're using edgeDragging, only count as hits when we hit the outer collider AND not the inner
                 menuHit = !menuHit && StickyMenuMod.Instance.DragCollider.Raycast(

@@ -1,33 +1,32 @@
-﻿using MelonLoader;
+﻿using BepInEx.Configuration;
 
 namespace StickyMenu
 {
     public class Config
     {
-        private readonly MelonPreferences_Category _generalCategory;
-        public MelonPreferences_Entry<bool> Enabled;
-        public MelonPreferences_Entry<bool> LockPosition;
-        public MelonPreferences_Entry<bool> LockRotation;
-        public MelonPreferences_Entry<bool> EnableDragging;
-        public MelonPreferences_Entry<bool> UseEdgeDragging;
+        public ConfigEntry<bool> Enabled;
+        public ConfigEntry<bool> LockPosition;
+        public ConfigEntry<bool> LockRotation;
+        public ConfigEntry<bool> EnableDragging;
+        public ConfigEntry<bool> UseEdgeDragging;
 
-        public Config()
+        private ConfigFile _file;
+        
+        public Config(ConfigFile file)
         {
-            _generalCategory = MelonPreferences.CreateCategory("StickyMenu", "StickyMenu");
-            _generalCategory.LoadFromFile();
+            _file = file;
+            //_file.SaveOnConfigSet = true; // Don't need it before I have some way of changing settings from in-game
 
-            Enabled = _generalCategory.CreateEntry("Enabled", true);
-            LockPosition = _generalCategory.CreateEntry("LockMenuPosition", true);
-            LockRotation = _generalCategory.CreateEntry("LockMenuRotation", true);
-            EnableDragging = _generalCategory.CreateEntry("EnableMenuDragging", true);
-            UseEdgeDragging = _generalCategory.CreateEntry("UseEdgeDragging", true);
-
-            _generalCategory.SaveToFile(false);
+            Enabled = file.Bind("General", "Enabled", true, "Enable/disable mod");
+            LockPosition = file.Bind("General", "LockMenuPosition", true, "Whether to lock the menus position to the player");
+            LockRotation = file.Bind("General", "LockMenuRotation", true, "Whether to lock the menus rotation to the player");
+            EnableDragging = file.Bind("General", "EnableMenuDragging", true, "Whether to enable dragging the menu by grabbing it");
+            UseEdgeDragging = file.Bind("General" , "UseEdgeDragging", true, "Whether to drag by grabbing the edge. The alternative is using the JavaScript event");
         }
 
         ~Config()
         {
-            _generalCategory.SaveToFile();
+            
         }
     }
 }

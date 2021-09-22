@@ -39,12 +39,13 @@ namespace StickyMenu
         private Offset _offset;
 
         public static bool Dragging = false;
-        public Config Config => _config;
+        public Config StickyMenuConfig => _config;
         public BoxCollider DragCollider = null;
         public static StickyMenuMod Instance { get; private set; }
 
         private void Awake()
         {
+            Logger.LogInfo("Helloy");
             Instance = this;
 
             // Attempt to init every time we load a scene until we have successfully initialized
@@ -72,7 +73,7 @@ namespace StickyMenu
             if (_menuView is null || _playerLocalTransform is null)
                 return;
 
-            _config = new Config();
+            _config = new Config(Config);
 
             SetupConstraint();
 
@@ -102,7 +103,7 @@ namespace StickyMenu
             if (_menuView is null || !_menuView.View.IsReadyForBindings())
                 return;
             
-            if (Config.UseEdgeDragging.Value)
+            if (_config.UseEdgeDragging.Value)
             {
                 MethodPatcher.OnGrabMenu += GrabStart;
             }
