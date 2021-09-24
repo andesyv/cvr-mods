@@ -20,16 +20,23 @@ namespace StickyMenu
         public static RaycastHit HitInfo = new RaycastHit();
         public static MethodInfo GrabObjectMethod;
 
+        private static Harmony _harmonyInstance;
+
         public static void DoPatching()
         {
-            var harmony = new HarmonyLib.Harmony("dev.syvertsen.plugins.stickymenu.patch");
-            harmony.PatchAll();
+            _harmonyInstance = new HarmonyLib.Harmony("dev.syvertsen.plugins.stickymenu.patch");
+            _harmonyInstance.PatchAll();
 
             GrabObjectMethod = typeof(ControllerRay).GetMethod("GrabObject",
                 BindingFlags.Instance | BindingFlags.NonPublic, null, new[]
                 {
                     typeof(CVRPickupObject), typeof(RaycastHit)
                 }, null);
+        }
+
+        public static void UndoPatching()
+        {
+            _harmonyInstance?.UnpatchAll();
         }
     }
 

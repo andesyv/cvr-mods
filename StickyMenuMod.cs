@@ -37,6 +37,7 @@ namespace StickyMenu
         private Config _config;
         private CVRPickupObject _pickupable;
         private Offset _offset;
+        private BoundEventHandle? _noButtonEventHandle = null;
 
         public static bool Dragging = false;
         public Config StickyMenuConfig => _config;
@@ -109,7 +110,7 @@ namespace StickyMenu
             }
             else
             {
-                _menuView.View.RegisterForEvent("CVRNoButtonClicked", new Action(GrabStart));
+                _noButtonEventHandle = _menuView.View.RegisterForEvent("CVRNoButtonClicked", new Action(GrabStart));
             }
             
             MethodPatcher.OnMenuMouseUp += GrabEnd;
@@ -118,6 +119,14 @@ namespace StickyMenu
             Logger.LogInfo("Init done!");
 
             _initStatus = Status.Finished;
+        }
+
+        private void UnregisterEvents()
+        {
+            if (!_config.UseEdgeDragging.Value && _noButtonEventHandle != null)
+            {
+                _menuView.View.UnregisterFromEvent((BoundEventHandle)_noButtonEventHandle);
+            }
         }
 
         private void SetupConstraint()
@@ -133,6 +142,13 @@ namespace StickyMenu
             _pickupable = _menuView.gameObject.AddComponent<CVRPickupObject>();
             _menuView.gameObject.GetComponent<Rigidbody>().isKinematic = true;
             DragCollider.enabled = false;
+        }
+
+        private void ObliterateConstraints()
+        {
+            Destroy(_pickupable);
+            Destroy(_menuView.gameObject.GetComponent<CVRInteractable>());
+            Destroy(DragCollider);
         }
 
         private void EnableConstraint()
@@ -203,6 +219,16 @@ namespace StickyMenu
 
             if (_config.LockRotation.Value)
                 _menuView.transform.rotation = _offset.Rotation * _playerLocalTransform.rotation;
+        }
+
+        private void OnDestroy()
+        {
+            GrabEnd();
+            ObliterateConstraints();
+            UnregisterEvents();
+            MethodPatcher.UndoPatching();
+
+            _initStatus = Status.NotStarted;
         }
     }
 }
