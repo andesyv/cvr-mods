@@ -5,12 +5,11 @@ using ABI.CCK.Components;
 using ABI_RC.Core.InteractionSystem;
 using ABI_RC.Core.Savior;
 using HarmonyLib;
-using MelonLoader;
 using UnityEngine;
 
 namespace StickyMenu
 {
-    internal class MethodPatcher
+    internal static class MethodPatcher
     {
         public static Action OnMenuEnabled;
         public static Action OnMenuDisabled;
@@ -20,17 +19,28 @@ namespace StickyMenu
         public static ControllerRay RayInstance = null;
         public static RaycastHit HitInfo = new RaycastHit();
         public static MethodInfo GrabObjectMethod;
+        
+        private static Harmony _harmonyInstance;
 
         public static void DoPatching()
         {
-            var harmony = new HarmonyLib.Harmony("andough.stickymenu.patch");
-            harmony.PatchAll();
-
+            _harmonyInstance = new HarmonyLib.Harmony("dev.syvertsen.plugins.stickymenu.patch");
+            _harmonyInstance.PatchAll();
+            
             GrabObjectMethod = typeof(ControllerRay).GetMethod("GrabObject",
                 BindingFlags.Instance | BindingFlags.NonPublic, null, new[]
                 {
                     typeof(CVRPickupObject), typeof(RaycastHit)
                 }, null);
+        }
+
+        public static void UndoPatching()
+        {
+            _harmonyInstance?.UnpatchSelf();
+            OnMenuEnabled = null;
+            OnMenuDisabled = null;
+            OnMenuMouseUp = null;
+            OnGrabMenu = null;
         }
     }
 
@@ -65,7 +75,7 @@ namespace StickyMenu
                     __instance.transform.TransformDirection(__instance.RayDirection)), out MethodPatcher.HitInfo,
                 1000f) ?? false;
 
-            if (StickyMenuMod.Instance.Config.UseEdgeDragging.Value)
+            if (StickyMenuMod.Instance.StickyMenuConfig.UseEdgeDragging.Value)
             {
                 // If we're using edgeDragging, only count as hits when we hit the outer collider AND not the inner
                 menuHit = !menuHit && StickyMenuMod.Instance.DragCollider.Raycast(

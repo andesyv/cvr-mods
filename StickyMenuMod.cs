@@ -1,14 +1,17 @@
 ﻿using System;
 using System.Linq;
 using ABI.CCK.Components;
+using BepInEx;
 using cohtml;
 using cohtml.Net;
-using MelonLoader;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace StickyMenu
 {
-    public class StickyMenuMod : MelonMod
+    [BepInPlugin("dev.syvertsen.plugins.stickymenu", "Sticky Menu", "2.0.0")]
+    [BepInProcess("ChilloutVR.exe")]
+    public class StickyMenuMod : BaseUnityPlugin
     {
         private const string MainMenuViewName = "CohtmlWorldView";
         private const string PlayerLocalTransformName = "_PLAYERLOCAL";
@@ -34,22 +37,29 @@ namespace StickyMenu
         private Config _config;
         private CVRPickupObject _pickupable;
         private Offset _offset;
+        private BoundEventHandle? _noButtonEventHandle = null;
 
         public static bool Dragging = false;
-        public Config Config => _config;
+        public Config StickyMenuConfig => _config;
         public BoxCollider DragCollider = null;
         public static StickyMenuMod Instance { get; private set; }
 
-
-        private StickyMenuMod()
+        private void Awake()
         {
+            Logger.LogInfo("Init started!");
             Instance = this;
+
+            Init();
+            // Attempt to init every time we load a scene until we have successfully initialized
+            if (_initStatus != Status.Finished)
+                SceneManager.sceneLoaded += OnSceneWasLoaded;
         }
 
-        public override void OnSceneWasLoaded(int buildIndex, string sceneName)
+        public void OnSceneWasLoaded(Scene scene, LoadSceneMode mode)
         {
-            base.OnSceneWasLoaded(buildIndex, sceneName);
             Init();
+            if (_initStatus == Status.Finished)
+                SceneManager.sceneLoaded -= OnSceneWasLoaded;
         }
 
         private void Init()
@@ -66,17 +76,19 @@ namespace StickyMenu
             if (_menuView is null || _playerLocalTransform is null)
                 return;
 
-            _config = new Config();
+            _config = new Config(Config);
 
             SetupConstraint();
-
+            
             MethodPatcher.OnMenuEnabled += EnableConstraint;
             MethodPatcher.OnMenuDisabled += DisableConstraint;
             MethodPatcher.DoPatching();
 
-            _menuView.Listener.ReadyForBindings += RegisterEvents;
-
             _initStatus = Status.WaitingForEventRegistration;
+            if (_menuView.View.IsReadyForBindings())
+                RegisterEvents();
+            else
+                _menuView.Listener.ReadyForBindings += RegisterEvents;
         }
 
         private static CohtmlView FindMainMenuView()
@@ -96,21 +108,29 @@ namespace StickyMenu
             if (_menuView is null || !_menuView.View.IsReadyForBindings())
                 return;
             
-            if (Config.UseEdgeDragging.Value)
+            if (_config.UseEdgeDragging.Value)
             {
                 MethodPatcher.OnGrabMenu += GrabStart;
             }
             else
             {
-                _menuView.View.RegisterForEvent("CVRNoButtonClicked", new Action(GrabStart));
+                _noButtonEventHandle = _menuView.View.RegisterForEvent("CVRNoButtonClicked", new Action(GrabStart));
             }
             
             MethodPatcher.OnMenuMouseUp += GrabEnd;
 
 
-            MelonLogger.Msg("Init done!");
+            Logger.LogInfo("Init done!");
 
             _initStatus = Status.Finished;
+        }
+
+        private void UnregisterEvents()
+        {
+            if (!_config.UseEdgeDragging.Value && _noButtonEventHandle != null)
+            {
+                _menuView.View.UnregisterFromEvent((BoundEventHandle)_noButtonEventHandle);
+            }
         }
 
         private void SetupConstraint()
@@ -121,22 +141,29 @@ namespace StickyMenu
             DragCollider = _menuView.gameObject.AddComponent<BoxCollider>();
             DragCollider.isTrigger = true;
             var innerBounds = _menuView.gameObject.GetComponent<MeshRenderer>().bounds.size;
-            DragCollider.size = new Vector3(innerBounds.x * 0.7F, innerBounds.y * 1.3F, 0.2F);
+            DragCollider.size = new Vector3(1.1F, 1.1F, 0.2F);
             _menuView.gameObject.AddComponent<CVRInteractable>();
             _pickupable = _menuView.gameObject.AddComponent<CVRPickupObject>();
             _menuView.gameObject.GetComponent<Rigidbody>().isKinematic = true;
             DragCollider.enabled = false;
         }
 
+        private void ObliterateConstraints()
+        {
+            Destroy(_pickupable);
+            Destroy(_menuView.gameObject.GetComponent<CVRInteractable>());
+            Destroy(DragCollider);
+        }
+
         private void EnableConstraint()
         {
             if (_enabled || !_config.Enabled.Value)
                 return;
-
+            
+            UpdateOffset();
+            
             _enabled = true;
             DragCollider.enabled = true;
-
-            UpdateOffset();
         }
 
         private void DisableConstraint()
@@ -157,12 +184,12 @@ namespace StickyMenu
             
             if (_pickupable is null)
             {
-                MelonLogger.Error("_pickupable is null!");
+                Logger.LogError("_pickupable is null!");
                 return;
             }
 
             if (!_config.UseEdgeDragging.Value)
-                MethodPatcher.GrabObjectMethod.Invoke(MethodPatcher.RayInstance, new object[] {_pickupable, MethodPatcher.HitInfo});
+                MethodPatcher.GrabObjectMethod?.Invoke(MethodPatcher.RayInstance, new object[] {_pickupable, MethodPatcher.HitInfo});
         }
 
         private void GrabEnd()
@@ -180,22 +207,31 @@ namespace StickyMenu
         {
             _offset.Position = _menuView.transform.position - _playerLocalTransform.position;
             _offset.LocalPosition = _playerLocalTransform.InverseTransformVector(_offset.Position);
-            _offset.Rotation = _playerLocalTransform.rotation * Quaternion.Inverse(_menuView.transform.rotation);
+            _offset.Rotation = _menuView.transform.rotation * Quaternion.Inverse(_playerLocalTransform.rotation);
         }
 
-        public override void OnFixedUpdate()
+        private void FixedUpdate()
         {
             if (!_enabled || Dragging || _initStatus != Status.Finished || !_config.Enabled.Value)
                 return;
 
-            var posOffset = _config.LockRotation.Value
-                ? _playerLocalTransform.TransformVector(_offset.LocalPosition)
-                : _offset.Position;
+            var posOffset = _playerLocalTransform.TransformVector(_offset.LocalPosition);
             if (_config.LockPosition.Value)
                 _menuView.transform.position = _playerLocalTransform.position + posOffset;
 
             if (_config.LockRotation.Value)
                 _menuView.transform.rotation = _offset.Rotation * _playerLocalTransform.rotation;
+        }
+
+        private void OnDestroy()
+        {
+            GrabEnd();
+            ObliterateConstraints();
+            UnregisterEvents();
+            MethodPatcher.UndoPatching();
+            SceneManager.sceneLoaded -= OnSceneWasLoaded;
+
+            _initStatus = Status.NotStarted;
         }
     }
 }

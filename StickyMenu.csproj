@@ -1,39 +1,18 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
-<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
   <PropertyGroup>
-    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
-    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
-    <ProjectGuid>{C5833A0E-304C-46F4-99BB-77DC6815AA7C}</ProjectGuid>
-    <OutputType>Library</OutputType>
-    <AppDesignerFolder>Properties</AppDesignerFolder>
-    <RootNamespace>StickyMenu</RootNamespace>
-    <AssemblyName>StickyMenu</AssemblyName>
-    <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
-    <FileAlignment>512</FileAlignment>
-    <Deterministic>true</Deterministic>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <OutputPath>bin/$(Configuration)</OutputPath>
     <ChilloutVRRoot Condition="'$(ChilloutVRRoot)' == ''">$(STEAMROOT)\steamapps\common\ChilloutVR</ChilloutVRRoot>
+    <PostBuildEvent>copy /y "$(MSBuildProjectDirectory)\$(OutputPath)\$(TargetFramework)\StickyMenu.dll" "$(ChilloutVRRoot)\BepInEx\scripts\"</PostBuildEvent>
   </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
-    <DebugSymbols>true</DebugSymbols>
-    <DebugType>full</DebugType>
-    <Optimize>false</Optimize>
-    <OutputPath>bin\Debug\</OutputPath>
-    <DefineConstants>DEBUG;TRACE</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
-    <DebugType>pdbonly</DebugType>
-    <Optimize>true</Optimize>
-    <OutputPath>bin\Release\</OutputPath>
-    <DefineConstants>TRACE</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-  </PropertyGroup>
+
   <ItemGroup>
     <Reference Include="Assembly-CSharp">
       <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\Assembly-CSharp.dll</HintPath>
+    </Reference>
+    <Reference Include="BepInEx">
+      <HintPath>$(ChilloutVRRoot)\BepInEx\core\BepInEx.dll</HintPath>
     </Reference>
     <Reference Include="cohtml.Net">
       <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\cohtml.Net.dll</HintPath>
@@ -41,17 +20,9 @@
     <Reference Include="Cohtml.Runtime">
       <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\Cohtml.Runtime.dll</HintPath>
     </Reference>
-    <Reference Include="MelonLoader">
-      <HintPath>$(ChilloutVRRoot)\MelonLoader\MelonLoader.dll</HintPath>
+    <Reference Include="UnityEngine">
+      <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\UnityEngine.dll</HintPath>
     </Reference>
-    <Reference Include="System" />
-    <Reference Include="System.Core" />
-    <Reference Include="System.Xml.Linq" />
-    <Reference Include="System.Data.DataSetExtensions" />
-    <Reference Include="Microsoft.CSharp" />
-    <Reference Include="System.Data" />
-    <Reference Include="System.Net.Http" />
-    <Reference Include="System.Xml" />
     <Reference Include="UnityEngine.AnimationModule">
       <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\UnityEngine.AnimationModule.dll</HintPath>
     </Reference>
@@ -62,16 +33,12 @@
       <SpecificVersion>False</SpecificVersion>
       <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\UnityEngine.PhysicsModule.dll</HintPath>
     </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(ChilloutVRRoot)\BepInEx\core\0Harmony.dll</HintPath>
+    </Reference>
+    <Reference Include="BepInEx.Harmony">
+      <HintPath>$(ChilloutVRRoot)\BepInEx\core\BepInEx.Harmony.dll</HintPath>
+    </Reference>
   </ItemGroup>
-  <ItemGroup>
-    <Compile Include="Config.cs" />
-    <Compile Include="MethodPatcher.cs" />
-    <Compile Include="PersistentObjectFinder.cs" />
-    <Compile Include="StickyMenuMod.cs" />
-    <Compile Include="Properties\AssemblyInfo.cs" />
-  </ItemGroup>
-  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
-  <PropertyGroup>
-    <PostBuildEvent>copy /y "$(TargetPath)" "$(ChilloutVRRoot)\Mods\"</PostBuildEvent>
-  </PropertyGroup>
+
 </Project>
