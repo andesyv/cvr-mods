@@ -1,5 +1,4 @@
-﻿
-using System;
+﻿using System;
 using System.Reflection;
 using ABI.CCK.Components;
 using ABI_RC.Core.InteractionSystem;
@@ -15,18 +14,18 @@ namespace StickyMenu
         public static Action OnMenuDisabled;
         public static Action OnMenuMouseUp;
         public static Action OnGrabMenu;
-        public static bool MouseDownOnMenu = false;
-        public static ControllerRay RayInstance = null;
-        public static RaycastHit HitInfo = new RaycastHit();
+        public static bool MouseDownOnMenu;
+        public static ControllerRay RayInstance;
+        public static RaycastHit HitInfo;
         public static MethodInfo GrabObjectMethod;
-        
+
         private static Harmony _harmonyInstance;
 
         public static void DoPatching()
         {
-            _harmonyInstance = new HarmonyLib.Harmony("dev.syvertsen.plugins.stickymenu.patch");
+            _harmonyInstance = new Harmony("dev.syvertsen.plugins.stickymenu.patch");
             _harmonyInstance.PatchAll();
-            
+
             GrabObjectMethod = typeof(ControllerRay).GetMethod("GrabObject",
                 BindingFlags.Instance | BindingFlags.NonPublic, null, new[]
                 {
@@ -57,8 +56,8 @@ namespace StickyMenu
     [HarmonyPatch(typeof(ControllerRay), "Update")]
     public class ControllerRayUpdatePatch
     {
-        private static bool _lastMouseDown = false;
-        private static bool _lastMouseUp = false;
+        private static bool _lastMouseDown;
+        private static bool _lastMouseUp;
 
         private static readonly AccessTools.FieldRef<ControllerRay, bool> HandRef =
             AccessTools.FieldRefAccess<ControllerRay, bool>("hand");
@@ -76,18 +75,16 @@ namespace StickyMenu
                 1000f) ?? false;
 
             if (StickyMenuMod.Instance.StickyMenuConfig.UseEdgeDragging.Value)
-            {
                 // If we're using edgeDragging, only count as hits when we hit the outer collider AND not the inner
                 menuHit = !menuHit && StickyMenuMod.Instance.DragCollider.Raycast(
                     new Ray(__instance.transform.position,
                         __instance.transform.TransformDirection(__instance.RayDirection)),
                     out MethodPatcher.HitInfo,
                     1000f);
-            }
 
             // If dragging, ray tracing will always fail, so just go by the input instead.
-            var down = StickyMenuMod.Dragging ? MouseDown(__instance) : (menuHit && MouseDown(__instance));
-            var up = StickyMenuMod.Dragging ? MouseUp(__instance) : (!menuHit || MouseUp(__instance));
+            var down = StickyMenuMod.Dragging ? MouseDown(__instance) : menuHit && MouseDown(__instance);
+            var up = StickyMenuMod.Dragging ? MouseUp(__instance) : !menuHit || MouseUp(__instance);
 
             var pressed = !_lastMouseDown && down;
             var released = !down && !_lastMouseUp && up;
@@ -96,10 +93,7 @@ namespace StickyMenu
             _lastMouseDown = down;
             _lastMouseUp = up;
 
-            if (pressed)
-            {
-                MethodPatcher.MouseDownOnMenu = true;
-            }
+            if (pressed) MethodPatcher.MouseDownOnMenu = true;
 
             if (released)
             {
@@ -126,7 +120,7 @@ namespace StickyMenu
         }
     }
 
-    [HarmonyPatch(typeof(ControllerRay), "GrabObject", new Type[] {typeof(CVRPickupObject), typeof(RaycastHit)})]
+    [HarmonyPatch(typeof(ControllerRay), "GrabObject", typeof(CVRPickupObject), typeof(RaycastHit))]
     public class ControllerRayGrabObjectPatch
     {
         public static void Postfix(CVRPickupObject pickup, RaycastHit hit)
