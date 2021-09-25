@@ -9,7 +9,7 @@ using UnityEngine;
 
 namespace StickyMenu
 {
-    internal class MethodPatcher
+    internal static class MethodPatcher
     {
         public static Action OnMenuEnabled;
         public static Action OnMenuDisabled;
@@ -19,14 +19,14 @@ namespace StickyMenu
         public static ControllerRay RayInstance = null;
         public static RaycastHit HitInfo = new RaycastHit();
         public static MethodInfo GrabObjectMethod;
-
+        
         private static Harmony _harmonyInstance;
 
         public static void DoPatching()
         {
             _harmonyInstance = new HarmonyLib.Harmony("dev.syvertsen.plugins.stickymenu.patch");
             _harmonyInstance.PatchAll();
-
+            
             GrabObjectMethod = typeof(ControllerRay).GetMethod("GrabObject",
                 BindingFlags.Instance | BindingFlags.NonPublic, null, new[]
                 {
@@ -36,7 +36,11 @@ namespace StickyMenu
 
         public static void UndoPatching()
         {
-            _harmonyInstance?.UnpatchAll();
+            _harmonyInstance?.UnpatchSelf();
+            OnMenuEnabled = null;
+            OnMenuDisabled = null;
+            OnMenuMouseUp = null;
+            OnGrabMenu = null;
         }
     }
 
