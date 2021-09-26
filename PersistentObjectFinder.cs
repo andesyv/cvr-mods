@@ -7,15 +7,16 @@ namespace StickyMenu
 {
     internal class PersistentObjectFinder
     {
-        private static PersistentObjectFinder _instance = null;
+        private static PersistentObjectFinder _instance;
         private GameObject _spy;
-        private static PersistentObjectFinder Instance => _instance ?? (_instance = new PersistentObjectFinder());
 
         private PersistentObjectFinder()
         {
             _spy = new GameObject("PersistentObjectFinder");
             Object.DontDestroyOnLoad(_spy);
         }
+
+        private static PersistentObjectFinder Instance => _instance ?? (_instance = new PersistentObjectFinder());
 
         public static GameObject Find(string name, StringComparison stringComparisonType = StringComparison.Ordinal)
         {

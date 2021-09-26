@@ -1,44 +1,48 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <PropertyGroup>
-    <TargetFramework>netstandard2.0</TargetFramework>
-    <OutputPath>bin/$(Configuration)</OutputPath>
-    <ChilloutVRRoot Condition="'$(ChilloutVRRoot)' == ''">$(STEAMROOT)\steamapps\common\ChilloutVR</ChilloutVRRoot>
-    <PostBuildEvent>copy /y "$(MSBuildProjectDirectory)\$(OutputPath)\$(TargetFramework)\StickyMenu.dll" "$(ChilloutVRRoot)\BepInEx\scripts\"</PostBuildEvent>
-  </PropertyGroup>
+    <PropertyGroup>
+        <TargetFramework>netstandard2.0</TargetFramework>
+        <OutputPath>bin/$(Configuration)</OutputPath>
+        <ChilloutVRRoot Condition="'$(ChilloutVRRoot)' == ''">$(STEAMROOT)\steamapps\common\ChilloutVR</ChilloutVRRoot>
+        <PostBuildEvent>copy /y "$(MSBuildProjectDirectory)\$(OutputPath)\$(TargetFramework)\StickyMenu.dll" "$(ChilloutVRRoot)\BepInEx\scripts\"</PostBuildEvent>
+    </PropertyGroup>
 
-  <ItemGroup>
-    <Reference Include="Assembly-CSharp">
-      <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\Assembly-CSharp.dll</HintPath>
-    </Reference>
-    <Reference Include="BepInEx">
-      <HintPath>$(ChilloutVRRoot)\BepInEx\core\BepInEx.dll</HintPath>
-    </Reference>
-    <Reference Include="cohtml.Net">
-      <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\cohtml.Net.dll</HintPath>
-    </Reference>
-    <Reference Include="Cohtml.Runtime">
-      <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\Cohtml.Runtime.dll</HintPath>
-    </Reference>
-    <Reference Include="UnityEngine">
-      <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\UnityEngine.dll</HintPath>
-    </Reference>
-    <Reference Include="UnityEngine.AnimationModule">
-      <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\UnityEngine.AnimationModule.dll</HintPath>
-    </Reference>
-    <Reference Include="UnityEngine.CoreModule">
-      <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
-    </Reference>
-    <Reference Include="UnityEngine.PhysicsModule, Version=0.0.0.0, Culture=neutral, processorArchitecture=MSIL">
-      <SpecificVersion>False</SpecificVersion>
-      <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\UnityEngine.PhysicsModule.dll</HintPath>
-    </Reference>
-    <Reference Include="0Harmony">
-      <HintPath>$(ChilloutVRRoot)\BepInEx\core\0Harmony.dll</HintPath>
-    </Reference>
-    <Reference Include="BepInEx.Harmony">
-      <HintPath>$(ChilloutVRRoot)\BepInEx\core\BepInEx.Harmony.dll</HintPath>
-    </Reference>
-  </ItemGroup>
+    <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
+        <DefineConstants>TRACE;HOT_RELOADING;</DefineConstants>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <Reference Include="Assembly-CSharp">
+            <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\Assembly-CSharp.dll</HintPath>
+        </Reference>
+        <Reference Include="BepInEx">
+            <HintPath>$(ChilloutVRRoot)\BepInEx\core\BepInEx.dll</HintPath>
+        </Reference>
+        <Reference Include="cohtml.Net">
+            <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\cohtml.Net.dll</HintPath>
+        </Reference>
+        <Reference Include="Cohtml.Runtime">
+            <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\Cohtml.Runtime.dll</HintPath>
+        </Reference>
+        <Reference Include="UnityEngine">
+            <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\UnityEngine.dll</HintPath>
+        </Reference>
+        <Reference Include="UnityEngine.AnimationModule">
+            <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\UnityEngine.AnimationModule.dll</HintPath>
+        </Reference>
+        <Reference Include="UnityEngine.CoreModule">
+            <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
+        </Reference>
+        <Reference Include="UnityEngine.PhysicsModule, Version=0.0.0.0, Culture=neutral, processorArchitecture=MSIL">
+            <SpecificVersion>False</SpecificVersion>
+            <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\UnityEngine.PhysicsModule.dll</HintPath>
+        </Reference>
+        <Reference Include="0Harmony">
+            <HintPath>$(ChilloutVRRoot)\BepInEx\core\0Harmony.dll</HintPath>
+        </Reference>
+        <Reference Include="BepInEx.Harmony">
+            <HintPath>$(ChilloutVRRoot)\BepInEx\core\BepInEx.Harmony.dll</HintPath>
+        </Reference>
+    </ItemGroup>
 
 </Project>
