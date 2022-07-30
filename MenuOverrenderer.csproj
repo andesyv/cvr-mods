@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>netstandard2.0</TargetFramework>
+        <OutputPath>bin/$(Configuration)</OutputPath>
+        <ChilloutVRRoot Condition="'$(ChilloutVRRoot)' == ''">$(STEAMROOT)\steamapps\common\ChilloutVR</ChilloutVRRoot>
+        <PostBuildEvent>copy /y "$(MSBuildProjectDirectory)\$(OutputPath)\$(TargetFramework)\MenuOverrenderer.dll" "$(ChilloutVRRoot)\BepInEx\scripts\"</PostBuildEvent>
+        <LangVersion>9</LangVersion>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <Reference Include="Assembly-CSharp">
+            <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\Assembly-CSharp.dll</HintPath>
+        </Reference>
+        <Reference Include="BepInEx">
+            <HintPath>$(ChilloutVRRoot)\BepInEx\core\BepInEx.dll</HintPath>
+        </Reference>
+        <Reference Include="Cohtml.Runtime, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null">
+          <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\Cohtml.Runtime.dll</HintPath>
+        </Reference>
+        <Reference Include="UnityEngine">
+            <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\UnityEngine.dll</HintPath>
+        </Reference>
+        <Reference Include="UnityEngine.AnimationModule, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null">
+          <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\UnityEngine.AnimationModule.dll</HintPath>
+        </Reference>
+        <Reference Include="UnityEngine.CoreModule">
+            <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
+        </Reference>
+        <Reference Include="0Harmony">
+            <HintPath>$(ChilloutVRRoot)\BepInEx\core\0Harmony.dll</HintPath>
+        </Reference>
+        <Reference Include="BepInEx.Harmony">
+            <HintPath>$(ChilloutVRRoot)\BepInEx\core\BepInEx.Harmony.dll</HintPath>
+        </Reference>
+        <Reference Include="UnityEngine.PhysicsModule, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null">
+          <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\UnityEngine.PhysicsModule.dll</HintPath>
+        </Reference>
+    </ItemGroup>
+
+</Project>

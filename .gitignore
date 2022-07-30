@@ -1,0 +1,9 @@
+﻿# Binaries
+bin
+obj
+
+# CMake files
+.idea
+
+# User config files
+*.sln.DotSettings.user
