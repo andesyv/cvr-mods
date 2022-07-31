@@ -9,13 +9,14 @@ namespace MenuReRender
 {
     internal class RenderReplacer : MonoBehaviour
     {
+        public Material material;
+        public Animator animator;
+
         private Renderer[] _renderers;
         private bool[] _enabledStates;
         private readonly Dictionary<Camera, CommandBuffer> _cameras = new();
-        public Material material;
         private RenderTexture _menuRenderTexture;
-        private ManualLogSource Logger { get; } = BepInEx.Logging.Logger.CreateLogSource("RenderReplacer");
-        public Animator animator;
+        private readonly ManualLogSource Logger = BepInEx.Logging.Logger.CreateLogSource("RenderReplacer");
 
         private void Awake()
         {
@@ -53,7 +54,7 @@ namespace MenuReRender
 
             if (!IsVisible())
                 return;
-            
+
             // Build command buffer
             var cb = new CommandBuffer();
             // var shaderID = Shader.PropertyToID("_MenuOverlay");
@@ -78,8 +79,6 @@ namespace MenuReRender
             // Add command buffer
             cam.AddCommandBuffer(CameraEvent.AfterEverything, cb);
             _cameras[cam] = cb;
-            
-            Logger.LogDebug("Added command buffer!");
         }
 
         private void OnDisable()
@@ -89,7 +88,6 @@ namespace MenuReRender
             _cameras.Clear();
 
             _renderers.Zip(_enabledStates, (rend, enable) => rend.enabled = enable);
-            Logger.LogDebug("Removed command buffer!");
         }
     }
 }
