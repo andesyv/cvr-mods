@@ -13,7 +13,8 @@ obj
 !/Resources/Assets
 /Resources/Assets/Bundle/*
 !/Resources/ProjectSettings
-!/Resources/bundleassets.cmd
+!/Resources/bundleassets.ps1
+!/Resources/bundleassets.sh
 
 # Keep the gitkeep files (bundling script requires the folder)
 !.gitkeep

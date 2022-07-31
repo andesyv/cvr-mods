@@ -16,13 +16,16 @@
             <HintPath>$(ChilloutVRRoot)\BepInEx\core\BepInEx.dll</HintPath>
         </Reference>
         <Reference Include="Cohtml.Runtime, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null">
-          <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\Cohtml.Runtime.dll</HintPath>
+            <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\Cohtml.Runtime.dll</HintPath>
         </Reference>
         <Reference Include="UnityEngine">
             <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\UnityEngine.dll</HintPath>
         </Reference>
         <Reference Include="UnityEngine.AnimationModule, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null">
-          <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\UnityEngine.AnimationModule.dll</HintPath>
+            <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\UnityEngine.AnimationModule.dll</HintPath>
+        </Reference>
+        <Reference Include="UnityEngine.AssetBundleModule">
+            <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\UnityEngine.AssetBundleModule.dll</HintPath>
         </Reference>
         <Reference Include="UnityEngine.CoreModule">
             <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
@@ -34,8 +37,13 @@
             <HintPath>$(ChilloutVRRoot)\BepInEx\core\BepInEx.Harmony.dll</HintPath>
         </Reference>
         <Reference Include="UnityEngine.PhysicsModule, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null">
-          <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\UnityEngine.PhysicsModule.dll</HintPath>
+            <HintPath>$(ChilloutVRRoot)\ChilloutVR_Data\Managed\UnityEngine.PhysicsModule.dll</HintPath>
         </Reference>
+    </ItemGroup>
+    <ItemGroup>
+        <EmbeddedResource Include="Resources\Assets\Bundle\menuoverrenderer.bundle" />
+        <Compile Remove="Resources\**" />
+        <None Remove="Resources\**" />
     </ItemGroup>
 
 </Project>

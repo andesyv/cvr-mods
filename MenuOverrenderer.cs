@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Resources;
 using BepInEx;
 using BepInEx.Configuration;
+using BepInEx.Logging;
 using cohtml;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -21,14 +22,12 @@ namespace MenuOverrenderer
         private const string PlayerLocalTransformName = "_PLAYERLOCAL";
         private static readonly int RenderDisabledLayer = LayerMask.NameToLayer("Ignore Raycast");
         private GameObject _mainMenu;
-        private Camera _overrenderCamera;
         private RenderReplacer _replacerInstance = null;
-        private int _prevCullingMask;
-        private int _prevMenuLayer;
+        private AssetBundle _assets;
+        public static Material UIMaterial;
 
         private void Awake()
         {
-            Logger.LogInfo("Hello world!");
             if (Init())
                 SceneManager.sceneLoaded += OnSceneWasLoaded;
         }
@@ -39,10 +38,12 @@ namespace MenuOverrenderer
             if (!_mainMenu)
                 return false;
 
+            if (!LoadAssets())
+                return false;
+
             _replacerInstance = _mainMenu.AddComponent<RenderReplacer>();
             if (!_replacerInstance)
                 return false;
-            _replacerInstance.LoggerCallback += (msg) => Logger.LogDebug(msg);
 
             if (Camera.main)
             {
@@ -57,8 +58,8 @@ namespace MenuOverrenderer
                 // Camera.onPostRender += CameraPreRender;
             }
 
-            if (!_overrenderCamera)
-                return false;
+            // if (!_overrenderCamera)
+            //     return false;
 
             Logger.LogInfo("MenuOverrenderer done initializing!");
             return true;
@@ -78,6 +79,11 @@ namespace MenuOverrenderer
 
             // if (Camera.main)
             //     Camera.main.cullingMask = _prevCullingMask;
+            
+            if (UIMaterial)
+                Destroy(UIMaterial);
+            if (_assets)
+                _assets.Unload(true);
         }
 
         private static GameObject FindMainMenu()
@@ -98,17 +104,70 @@ namespace MenuOverrenderer
         // {
         //     _mainMenu.layer = _prevMenuLayer;
         // }
+
+        private bool LoadAssets()
+        {
+            Logger.LogDebug("Loading assets");
+            // Very cool method of embedding assets into dll. Code taken from
+            // https://github.com/knah/VRCMods/blob/master/UIExpansionKit/UiExpansionKitMod.cs#L105
+            // and
+            // https://github.com/sinai-dev/UnityExplorer/blob/master/src/UI/UIManager.cs#L446
+            var stream = Assembly.GetExecutingAssembly()
+                .GetManifestResourceStream("MenuOverrenderer.Resources.Assets.Bundle.menuoverrenderer.bundle");
+            if (stream == null)
+            {
+                Logger.LogError("Failed to fetch reasource stream from assembly!");
+                return false;
+            }
+
+            // var memStream = new MemoryStream((int)stream.Length);
+            // stream.CopyTo(memStream);
+            // _assets = AssetBundle.LoadFromMemory(memStream.ToArray(), 0);
+            _assets = AssetBundle.LoadFromStream(stream);
+
+            if (!_assets)
+            {
+                Logger.LogError("Failed to load assetbundle!");
+                return false;
+            }
+
+            _assets.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+
+            UIMaterial = _assets.LoadAsset<Material>("ui.mat");
+            if (!UIMaterial)
+            {
+                Logger.LogError("Failed to fetch material from assetbundle!");
+                return false;
+            }
+
+            UIMaterial.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+            UIMaterial.EnableKeyword("UNITY_UV_STARTS_AT_TOP");
+            
+            Logger.LogDebug("Finished loading assets");
+
+            return true;
+        }
     }
 
     class RenderReplacer : MonoBehaviour
     {
-        public Action<String> LoggerCallback;
         private Renderer[] _mRenderers;
         private Dictionary<Camera, CommandBuffer> _cameras = new Dictionary<Camera, CommandBuffer>();
+        private Material _material;
+        private CohtmlView _view;
+        private ManualLogSource _logger = BepInEx.Logging.Logger.CreateLogSource("RenderReplacer");
+
+        RenderReplacer()
+        {
+            _material = MenuOverrenderer.UIMaterial;
+        }
 
         private void Awake()
         {
             _mRenderers = GetComponentsInChildren<Renderer>();
+            _view = GetComponent<CohtmlView>();
+            if (!_view)
+                _logger.LogError("View was not found!");
         }
 
         // Big inspiration taken from https://forum.unity.com/threads/rendering-an-object-multiple-times-with-different-materials.505138/
@@ -118,7 +177,7 @@ namespace MenuOverrenderer
             if (_cameras.ContainsKey(cam))
                 return;
 
-            LoggerCallback?.Invoke($"Current buffer count: {cam.commandBufferCount}");
+            _logger.LogDebug($"Current buffer count: {cam.commandBufferCount}");
 
             // Build command buffer
             var cb = new CommandBuffer();
@@ -128,7 +187,14 @@ namespace MenuOverrenderer
             cb.ClearRenderTarget(true, true, Color.cyan, 0.0f);
 
             foreach (var rend in _mRenderers)
-                cb.DrawRenderer(rend, rend.material);
+            {
+                if (_view)
+                {
+                    cb.SetGlobalTexture("_GlobalUITexture", _view.ViewTexture);
+                    _logger.LogDebug($"_GlobalUITexture was set to {_view.ViewTexture.name}");
+                }
+                cb.DrawRenderer(rend, _material);
+            }
 
             // cb.SetRenderTarget(BuiltinRenderTextureType.CameraTarget);
             cb.Blit(shaderID, BuiltinRenderTextureType.CameraTarget);
@@ -138,8 +204,8 @@ namespace MenuOverrenderer
             cam.AddCommandBuffer(CameraEvent.AfterEverything, cb);
             _cameras[cam] = cb;
 
-            LoggerCallback?.Invoke("Added command buffer!");
-            LoggerCallback?.Invoke($"Current buffer count: {cam.commandBufferCount}");
+            _logger.LogDebug("Added command buffer!");
+            _logger.LogDebug($"Current buffer count: {cam.commandBufferCount}");
         }
 
         private void OnDestroy()

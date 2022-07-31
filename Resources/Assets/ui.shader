@@ -4,7 +4,6 @@ Shader "Andough/DefaultUI"
 {
     Properties
     {
-        [PerRendererData] _MainTex ("Sprite Texture", 2D) = "white" {}
         _Color ("Tint", Color) = (1,1,1,1)
 
         _StencilComp ("Stencil Comparison", Float) = 8
@@ -41,9 +40,9 @@ Shader "Andough/DefaultUI"
         Cull Off
         Lighting Off
         ZWrite Off
-        ZTest [unity_GUIZTestMode]
+        ZTest Always
         Blend SrcAlpha OneMinusSrcAlpha
-        ColorMask [_ColorMask]
+        ColorMask RGBA
 
         Pass
         {
@@ -76,11 +75,11 @@ Shader "Andough/DefaultUI"
                 UNITY_VERTEX_OUTPUT_STEREO
             };
 
-            sampler2D _MainTex;
             fixed4 _Color;
             fixed4 _TextureSampleAdd;
             float4 _ClipRect;
-            float4 _MainTex_ST;
+            sampler2D _GlobalUITexture;
+            float4 _GlobalUITexture_ST;
 
             v2f vert(appdata_t v)
             {
@@ -90,7 +89,7 @@ Shader "Andough/DefaultUI"
                 OUT.worldPosition = v.vertex;
                 OUT.vertex = UnityObjectToClipPos(OUT.worldPosition);
 
-                OUT.texcoord = TRANSFORM_TEX(v.texcoord, _MainTex);
+                OUT.texcoord = TRANSFORM_TEX(v.texcoord, _GlobalUITexture);
                 OUT.texcoord.y = 1.0 - OUT.texcoord.y;
 
                 OUT.color = v.color * _Color;
@@ -99,15 +98,16 @@ Shader "Andough/DefaultUI"
 
             fixed4 frag(v2f IN) : SV_Target
             {
-                half4 color = (tex2D(_MainTex, IN.texcoord) + _TextureSampleAdd) * IN.color;
+                // half4 color = (tex2D(_GlobalUITexture, IN.texcoord) + _TextureSampleAdd) * IN.color;
+                half4 color = tex2D(_GlobalUITexture, IN.texcoord);
 
-                #ifdef UNITY_UI_CLIP_RECT
-                color.a *= UnityGet2DClipping(IN.worldPosition.xy, _ClipRect);
-                #endif
+                // #ifdef UNITY_UI_CLIP_RECT
+                // color.a *= UnityGet2DClipping(IN.worldPosition.xy, _ClipRect);
+                // #endif
 
-                #ifdef UNITY_UI_ALPHACLIP
-                clip (color.a - 0.001);
-                #endif
+                // #ifdef UNITY_UI_ALPHACLIP
+                // clip (color.a - 0.001);
+                // #endif
 
                 return color;
             }
