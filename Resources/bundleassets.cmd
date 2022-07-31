@@ -1,0 +1,1 @@
+unity -quit -batchmode -executeMethod BuildAssetBundlesEditorScript.BuildAssetBundles -projectPath .

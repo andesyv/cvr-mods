@@ -7,3 +7,13 @@ obj
 
 # User config files
 *.sln.DotSettings.user
+
+# Unity Files (ignore whole project except for certain files and folders)
+/Resources/*
+!/Resources/Assets
+/Resources/Assets/Bundle/*
+!/Resources/ProjectSettings
+!/Resources/bundleassets.cmd
+
+# Keep the gitkeep files (bundling script requires the folder)
+!.gitkeep
