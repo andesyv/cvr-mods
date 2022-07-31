@@ -4,8 +4,9 @@
         <TargetFramework>netstandard2.1</TargetFramework>
         <OutputPath>bin/$(Configuration)</OutputPath>
         <ChilloutVRRoot Condition="'$(ChilloutVRRoot)' == ''">$(STEAMROOT)\steamapps\common\ChilloutVR</ChilloutVRRoot>
-        <PostBuildEvent>copy /y "$(MSBuildProjectDirectory)\$(OutputPath)\$(TargetFramework)\MenuOverrenderer.dll" "$(ChilloutVRRoot)\BepInEx\scripts\"</PostBuildEvent>
+        <PostBuildEvent>copy /y "$(MSBuildProjectDirectory)\$(OutputPath)\$(TargetFramework)\MenuReRender.dll" "$(ChilloutVRRoot)\BepInEx\scripts\"</PostBuildEvent>
         <LangVersion>9</LangVersion>
+        <RootNamespace>MenuReRender</RootNamespace>
     </PropertyGroup>
 
     <ItemGroup>
@@ -41,7 +42,7 @@
         </Reference>
     </ItemGroup>
     <ItemGroup>
-        <EmbeddedResource Include="Resources\Assets\Bundle\menuoverrenderer.bundle" />
+        <EmbeddedResource Include="Resources\Assets\Bundle\menurerender.bundle" />
         <Compile Remove="Resources\**" />
         <None Remove="Resources\**" />
     </ItemGroup>

@@ -1,6 +1,6 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MenuOverrenderer", "MenuOverrenderer.csproj", "{868638BD-160F-42B5-8F87-C3032E59054B}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MenuReRender", "MenuReRender.csproj", "{868638BD-160F-42B5-8F87-C3032E59054B}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
