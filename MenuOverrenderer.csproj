@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <TargetFramework>netstandard2.0</TargetFramework>
+        <TargetFramework>netstandard2.1</TargetFramework>
         <OutputPath>bin/$(Configuration)</OutputPath>
         <ChilloutVRRoot Condition="'$(ChilloutVRRoot)' == ''">$(STEAMROOT)\steamapps\common\ChilloutVR</ChilloutVRRoot>
         <PostBuildEvent>copy /y "$(MSBuildProjectDirectory)\$(OutputPath)\$(TargetFramework)\MenuOverrenderer.dll" "$(ChilloutVRRoot)\BepInEx\scripts\"</PostBuildEvent>
