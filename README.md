@@ -1,10 +1,10 @@
 # ChilloutVR Mods
 
-This repo contains all my mods for ChilloutVR. Currently, there's only one mod here, but I hope that more will arrive or else it was somewhat pointless to create this repository.
+This repo contains all my mods for ChilloutVR. There's only one mod here currently, but I hope that more will arrive or else it was somewhat pointless to create a repository called "mods".
 
 ## Mods
 
-### MenuReRender
+### [MenuReRender](MenuReRender/README.md)
 This is a BepInEx mod that renders the menu and the quickmenu on top of the screen after everything else, making it virtually impossible (at least to my knowledge) for people to block your access to the menu. This mod is currently limited to desktop users.
 
 ## Installing

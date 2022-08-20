@@ -2,8 +2,11 @@
 bin
 obj
 
-# CMake files
+# JetBrains
 .idea
+
+# VS Code
+.vscode
 
 # User config files
 *.sln.DotSettings.user

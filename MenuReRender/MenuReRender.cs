@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using ABI_RC.Core.InteractionSystem;
+using ABI_RC.Core.Savior;
 using BepInEx;
 using cohtml;
 using HarmonyLib;
@@ -30,6 +31,12 @@ namespace MenuReRender
 
         private void Awake()
         {
+            if (MetaPort.Instance.isUsingVr)
+            {
+                Logger.LogInfo("MenuReRender is disabled due to VR being enabled");
+                return;
+            }
+
             _instance = this;
             if (!Init())
                 SceneManager.sceneLoaded += OnSceneWasLoaded;
@@ -75,7 +82,7 @@ namespace MenuReRender
                 return false;
             }
 
-            Logger.LogInfo("MenuOverRenderer done initializing!");
+            Logger.LogInfo("MenuReRender done initializing!");
             return true;
         }
 

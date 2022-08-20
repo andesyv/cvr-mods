@@ -49,14 +49,12 @@ Shader "Andough/DefaultUI"
             {
                 float4 vertex   : POSITION;
                 float2 texcoord : TEXCOORD0;
-                UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
             struct v2f
             {
                 float4 vertex   : SV_POSITION;
                 float2 texcoord  : TEXCOORD0;
-                UNITY_VERTEX_OUTPUT_STEREO
             };
 
             sampler2D _CurrentUITexture;
@@ -64,20 +62,18 @@ Shader "Andough/DefaultUI"
 
             v2f vert(appdata_t v)
             {
-                v2f OUT;
-                UNITY_SETUP_INSTANCE_ID(v);
-                UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(OUT);
-                OUT.vertex = UnityObjectToClipPos(v.vertex);
+                v2f o;
+                o.vertex = UnityObjectToClipPos(v.vertex);
 
-                OUT.texcoord = TRANSFORM_TEX(v.texcoord, _CurrentUITexture);
-                OUT.texcoord.y = 1.0 - OUT.texcoord.y;
+                o.texcoord = TRANSFORM_TEX(v.texcoord, _CurrentUITexture);
+                o.texcoord.y = 1.0 - o.texcoord.y;
                 
-                return OUT;
+                return o;
             }
 
-            fixed4 frag(v2f IN) : SV_Target
+            fixed4 frag(v2f i) : SV_Target
             {
-                half4 color = tex2D(_CurrentUITexture, IN.texcoord);
+                half4 color = tex2D(_CurrentUITexture, i.texcoord);
 
                 return color;
             }
