@@ -1,0 +1,23 @@
+﻿# Binaries
+bin
+obj
+
+# Editor files
+.idea
+.vscode
+.vs
+
+# User config files
+*.sln.DotSettings.user
+
+# Resources are stored in a Unity project
+# (ignore the whole project except for certain files and folders)
+res/[Ll]ibrary
+res/[Pp]ackages
+res/[Ll]ogs
+res/[Tt]emp
+res/[Uu]ser[Ss]ettings
+
+# Keep the asset bundling folder but no files
+res/[Aa]ssets/Bundle/*
+!.gitkeep

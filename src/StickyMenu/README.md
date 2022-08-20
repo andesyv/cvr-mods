@@ -1,15 +1,13 @@
 # Sticky Menu
 
-A small ChilloutVR mod that makes the menu follow your view. It also enables you to grab the menu as a prop and position
-the menu around in space. Uses [BepInEx](https://github.com/BepInEx/BepInEx ).
+A small ChilloutVR mod that makes the main menu follow your view. It also enables you to grab the main menu as a prop and position
+it around in space.
 
-## Installing
-
-Just add the dll file to the mods folder.
+**Note:** Currently the rotation is a bit wonky and I also have not confirmed that it works on the current version of the game so stuff might be broken.
 
 ## Dragging
 
-You can drag the menu by grabbing the sides of the menu like you would grab a prop, or by grabbing it with the offhand
+You can drag the main menu by grabbing the sides of the menu like you would grab a prop, or by grabbing it with the offhand
 you are not currently using to navigate the menu (interact with the menu to switch hand).
 
 Originally I wanted you to be able to grab the menu anywhere there aren't clickable buttons, and the logic for this is
@@ -20,7 +18,7 @@ adding a JavaScript event that triggers the `CVRNoButtonClicked` engine event an
 ## Config
 
 The default config file is located at
-`<game directory>/BepInEx/config/dev.syvertsen.plugins.stickymenu.cfg`.
+`<game directory>/BepInEx/config/com.andough.stickymenu.cfg`.
 
 There's descriptions for the different configurations in the config file, but they are described here aswell:
 | Name                  | Default   | Explanation           |
@@ -31,22 +29,10 @@ There's descriptions for the different configurations in the config file, but th
 | EnableMenuDragging    | `true`    | Whether to enable dragging the menu by grabbing it |
 | UseEdgeDragging       | `true`    | Whether to drag by grabbing the edge. The alternative is using the JavaScript event. See [Dragging](##dragging).     |
 
-## Disclaimer
-
-This modification is unofficial and not supported by Alpha Blend Interactive. Using this modification might cause issues
-with performance, security or stability of the games.
-
-I too am in no way affiliated with or supported by Alpha Blend Interactive and I take no responsibilities for any harm
-done by this mod. Use at your own risk.
-
-## Changed original code
+## Patched original code
 
 The `StickyMenu.MethodPatcher` class is responsible for all method modifications:
 
  - `ViewManager.UiStateToggle` has been changed to add an event on menu enable/disable
  - `ControllerRay.Update` has had it's logic reworked to enable overriding of menu interaction and add events on clicking outside / inside of menu
  - `ControllerRay.GrabObject` has been changed to add an event on menu grabbing
-
-## Licence
-
-MIT

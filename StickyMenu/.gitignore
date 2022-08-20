@@ -1,8 +1,0 @@
-# Build files
-[Bb]in/
-[Oo]bj/
-
-# User files
-.vs/
-*.user
-.idea/

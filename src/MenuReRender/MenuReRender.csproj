@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>MenuReRender</AssemblyName>
+    <Description>ChilloutVR mod that renders your menu on top of your screen</Description>
+    <Version>1.1.0</Version>
+    <RootNamespace>MenuReRender</RootNamespace>
+  </PropertyGroup>
+</Project>
