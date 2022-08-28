@@ -31,7 +31,7 @@ jobs:
 
       # Copied from ./res/bundleassets
       - name: Build assetbundles
-        run: ${{ steps.setup-unity.outputs.unity-path }} -quit -batchmode -executeMethod BuildAssetBundlesEditorScript.BuildAssetBundles -projectPath ${GITHUB_WORKSPACE}/res || exit 0
+        run: ${{ steps.setup-unity.outputs.unity-path }} -quit -batchmode -executeMethod BuildAssetBundlesEditorScript.BuildAssetBundles -projectPath $GITHUB_WORKSPACE/res || exit 0
 
       - name: Setup.NET
         uses: actions/setup-dotnet@v2
