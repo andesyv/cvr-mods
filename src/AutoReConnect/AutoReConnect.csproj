@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>com.andough.autoreconnect</AssemblyName>
+	<Product>AutoReConnect</Product>
+    <Description>A ChilloutVR mod that reconnects you after you've been disconnected from the game servers</Description>
+    <Version>1.0.0</Version>
+    <RootNamespace>AutoReConnect</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="HopLib">
+      <HintPath>..\..\lib\HopLib.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>
