@@ -1,9 +1,9 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <AssemblyName>StickyMenu</AssemblyName>
+    <AssemblyName>com.andough.stickymenu</AssemblyName>
+    <Product>StickyMenu</Product>
+    <Version>2.1.1</Version>
     <Description>Mod for ChilloutVR that makes the menu follow you</Description>
-    <Version>2.1.0</Version>
     <RootNamespace>StickyMenu</RootNamespace>
   </PropertyGroup>
 </Project>
-
