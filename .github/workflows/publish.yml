@@ -14,7 +14,15 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      - name: Cache Unity
+        id: cache-unity
+        uses: actions/cache@v3
+        with:
+          path: /opt/Unity
+          key: ${{ runner.os }}-unity
+
       - name: Setup Unity
+        if: steps.cache-unity.outputs.cache-hit != 'true'
         uses: pCYSl5EDgo/setup-unity@master
         with:
           unity-version: 2019.4.31f1
