@@ -18,6 +18,6 @@ res/[Ll]ogs
 res/[Tt]emp
 res/[Uu]ser[Ss]ettings
 
-# Keep the asset bundling folder but no files
-res/[Aa]ssets/Bundle/*
-!.gitkeep
+res/Assets/Bundle/*
+!res/Assets/Bundle/menurerender.bundle
+!res/Assets/Bundle/menurerender.bundle.manifest
