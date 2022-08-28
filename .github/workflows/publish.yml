@@ -17,7 +17,7 @@ jobs:
       - name: Setup Unity
         uses: pCYSl5EDgo/setup-unity@master
         with:
-          unity-version: 2019.4.28
+          unity-version: 2019.4.31f1
 
       # Copied from ./res/bundleassets
       - name: Build assetbundles
