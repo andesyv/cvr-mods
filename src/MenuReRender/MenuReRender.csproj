@@ -1,8 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <AssemblyName>MenuReRender</AssemblyName>
+    <AssemblyName>com.andough.menurerender</AssemblyName>
+    <Product>MenuReRender</Product>
+    <Version>1.1.1</Version>
     <Description>ChilloutVR mod that renders your menu on top of your screen</Description>
-    <Version>1.1.0</Version>
     <RootNamespace>MenuReRender</RootNamespace>
   </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\res\Assets\Bundle\menurerender.bundle" />
+    <Compile Remove="..\..\res\**" />
+    <None Remove="..\..\res\**" />
+  </ItemGroup>
 </Project>

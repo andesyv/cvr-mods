@@ -2,7 +2,6 @@
 using System.Linq;
 using ABI.CCK.Components;
 using BepInEx;
-using BepInEx.Unity.Mono;
 using cohtml;
 using cohtml.Net;
 using UnityEngine;
@@ -10,7 +9,7 @@ using UnityEngine.SceneManagement;
 
 namespace StickyMenu
 {
-    [BepInPlugin("com.andough.stickymenu", MyPluginInfo.PLUGIN_NAME, MyPluginInfo.PLUGIN_VERSION)]
+    [BepInPlugin(MyPluginInfo.PLUGIN_GUID, MyPluginInfo.PLUGIN_NAME, MyPluginInfo.PLUGIN_VERSION)]
     [BepInProcess("ChilloutVR.exe")]
     public class StickyMenuMod : BaseUnityPlugin
     {

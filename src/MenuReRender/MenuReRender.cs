@@ -5,7 +5,6 @@ using System.Reflection;
 using ABI_RC.Core.InteractionSystem;
 using ABI_RC.Core.Savior;
 using BepInEx;
-using BepInEx.Unity.Mono;
 using cohtml;
 using HarmonyLib;
 using UnityEngine;
@@ -13,7 +12,7 @@ using UnityEngine.SceneManagement;
 
 namespace MenuReRender
 {
-    [BepInPlugin("com.andough.menurerender", MyPluginInfo.PLUGIN_NAME, MyPluginInfo.PLUGIN_VERSION)]
+    [BepInPlugin(MyPluginInfo.PLUGIN_GUID, MyPluginInfo.PLUGIN_NAME, MyPluginInfo.PLUGIN_VERSION)]
     [BepInProcess("ChilloutVR.exe")]
     public class MenuReRender : BaseUnityPlugin
     {
