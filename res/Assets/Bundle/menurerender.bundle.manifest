@@ -1,0 +1,20 @@
+ManifestFileVersion: 0
+CRC: 83774882
+Hashes:
+  AssetFileHash:
+    serializedVersion: 2
+    Hash: 2624cdb2d5c173d0e8c07cf80073dc00
+  TypeTreeHash:
+    serializedVersion: 2
+    Hash: 10a6a558690295dadb3dd990eda0821a
+HashAppended: 0
+ClassTypes:
+- Class: 21
+  Script: {instanceID: 0}
+- Class: 48
+  Script: {instanceID: 0}
+SerializeReferenceClassIdentifiers: []
+Assets:
+- Assets/ui.shader
+- Assets/ui.mat
+Dependencies: []
