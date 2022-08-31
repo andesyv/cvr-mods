@@ -4,6 +4,7 @@
     <TargetFramework>netstandard2.1</TargetFramework>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <LangVersion>latest</LangVersion>
+    <Platforms>x64</Platforms>
   </PropertyGroup>
 
   <ItemGroup>
@@ -29,13 +30,20 @@
   </ItemGroup>
 
   <!-- Debugging helpers: -->
-	<PropertyGroup>
+	
+  <!-- Have to get a ScriptEngine plugin for BepInEx 6 first:
+  <PropertyGroup>
 		<DebugOutputPath Condition="Exists('$(CVRPath)')">$(CVRPath)\BepInEx\scripts\</DebugOutputPath>
 	</PropertyGroup>
   
 	<Target Name="PostBuild" AfterTargets="PostBuildEvent" Condition="'$(Configuration)'=='Debug' And Exists('$(DebugOutputPath)')">
     <Message Text="Copied $(TargetFileName) to $(DebugOutputPath)" Importance="high" />
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(DebugOutputPath)" />
+  </Target> -->
+
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent" Condition="'$(Configuration)'=='Debug'">
+    <Message Text="Copied $(TargetFileName) to $(CVRPath)\BepInEx\plugins\" Importance="high" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(CVRPath)\BepInEx\plugins\" />
   </Target>
 
 </Project>
