@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>com.andough.cameraviewers</AssemblyName>
+    <Product>CameraViewers</Product>
+    <Version>0.1.0</Version>
+    <Description>ChilloutVR mod that allows multiple cameras to be spawned and spawns external windows displaying the content of your cameras</Description>
+    <RootNamespace>CameraViewers</RootNamespace>
+  </PropertyGroup>
+</Project>
