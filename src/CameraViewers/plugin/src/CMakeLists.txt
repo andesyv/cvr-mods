@@ -1,0 +1,1 @@
+target_sources(unity-plugin PRIVATE main.cpp)
