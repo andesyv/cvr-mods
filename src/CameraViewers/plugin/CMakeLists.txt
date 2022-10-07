@@ -9,7 +9,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/bin/$<$<CONFIG:>:>)
 
 # Output executable
-add_executable(unity-plugin)
+add_library(unity-plugin SHARED)
+set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "com.andough.cameraviewers.renderingplugin")
+
+target_include_directories(unity-plugin PRIVATE ${CMAKE_SOURCE_DIR}/../../../lib/UnityPluginAPI)
 
 # Source files
 add_subdirectory(src)

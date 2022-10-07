@@ -1,0 +1,3 @@
+[submodule "lib/UnityPluginAPI"]
+	path = lib/UnityPluginAPI
+	url = git@github.com:StephenHodgson/Native-Unity-API.git
