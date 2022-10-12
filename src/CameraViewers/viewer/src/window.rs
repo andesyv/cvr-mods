@@ -1,11 +1,14 @@
 use std::sync::Arc;
 
+use bytemuck::{Pod, Zeroable};
+use cgmath::{Deg, Matrix4, PerspectiveFov};
 use vulkano::{
     device::{
         physical::{PhysicalDevice, PhysicalDeviceType, QueueFamily},
         Device, DeviceExtensions,
     },
-    image::{ImageUsage, SwapchainImage, ImageAccess, view::ImageView},
+    image::{view::ImageView, ImageAccess, ImageUsage, SwapchainImage},
+    impl_vertex,
     instance::{
         debug::{
             DebugUtilsMessageSeverity, DebugUtilsMessageType, DebugUtilsMessenger,
@@ -13,8 +16,10 @@ use vulkano::{
         },
         Instance, InstanceCreateInfo, InstanceExtensions,
     },
+    pipeline::graphics::viewport::Viewport,
+    render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass},
     swapchain::{Surface, Swapchain, SwapchainCreateInfo},
-    Version, render_pass::{RenderPass, Framebuffer, FramebufferCreateInfo}, pipeline::graphics::viewport::Viewport,
+    Version,
 };
 use vulkano_win::required_extensions;
 use winit::window::Window;
@@ -23,6 +28,20 @@ pub const DEVICE_EXTENSIONS: DeviceExtensions = DeviceExtensions {
     khr_swapchain: true,
     ..DeviceExtensions::none()
 };
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Zeroable, Pod)]
+pub struct Vertex {
+    position: [f32; 3],
+}
+
+impl Vertex {
+    pub const fn new(position: [f32; 3]) -> Self {
+        Vertex { position }
+    }
+}
+
+impl_vertex!(Vertex, position);
 
 pub fn create_instance() -> Arc<Instance> {
     Instance::new(InstanceCreateInfo {
@@ -122,10 +141,7 @@ pub fn find_physical_device<'a>(
 pub fn create_swapchain(
     device: &Arc<Device>,
     surface: &Arc<Surface<Window>>,
-) -> Option<(
-    Arc<Swapchain<Window>>,
-    Vec<Arc<SwapchainImage<Window>>>,
-)> {
+) -> Option<(Arc<Swapchain<Window>>, Vec<Arc<SwapchainImage<Window>>>)> {
     let surface_capabilities = device
         .physical_device()
         .surface_capabilities(surface, Default::default())
@@ -156,25 +172,33 @@ pub fn create_swapchain(
 }
 
 pub fn create_framebuffers(
-  images: &[Arc<SwapchainImage<Window>>],
-  render_pass: &Arc<RenderPass>,
-  viewport: &mut Viewport,
+    images: &[Arc<SwapchainImage<Window>>],
+    render_pass: &Arc<RenderPass>,
+    viewport: &mut Viewport,
+    perspective: &mut Matrix4<f32>,
 ) -> Vec<Arc<Framebuffer>> {
-  let dimensions = images[0].dimensions().width_height();
-  viewport.dimensions = [dimensions[0] as f32, dimensions[1] as f32];
+    let dimensions = images[0].dimensions().width_height();
+    viewport.dimensions = [dimensions[0] as f32, dimensions[1] as f32];
 
-  images
-      .iter()
-      .map(|img| {
-          let view = ImageView::new_default(img.clone()).unwrap();
-          Framebuffer::new(
-              render_pass.clone(),
-              FramebufferCreateInfo {
-                  attachments: vec![view],
-                  ..Default::default()
-              },
-          )
-          .unwrap()
-      })
-      .collect()
+    *perspective = Matrix4::from(PerspectiveFov {
+        fovy: Deg(45.0).into(),
+        aspect: viewport.dimensions[0] / viewport.dimensions[1],
+        near: 0.1,
+        far: 100.0,
+    });
+
+    images
+        .iter()
+        .map(|img| {
+            let view = ImageView::new_default(img.clone()).unwrap();
+            Framebuffer::new(
+                render_pass.clone(),
+                FramebufferCreateInfo {
+                    attachments: vec![view],
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+        })
+        .collect()
 }

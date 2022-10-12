@@ -8,4 +8,7 @@ edition = "2021"
 [dependencies]
 vulkano = "0.30.0"
 vulkano-win = "0.30.0"
+vulkano-shaders = "0.30.0"
 winit = "0.26.1" # Apparantly has to be hardcoded to same version vulkano-win uses
+bytemuck = "1.12.1"
+cgmath = "0.18.0" # Seems like a nice simple math library for non-complex CG coding

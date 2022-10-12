@@ -1,11 +1,21 @@
 use std::time::Instant;
 
+use cgmath::{Matrix4, Point3, SquareMatrix, Vector3};
 use vulkano::{
+    buffer::{BufferUsage, CpuAccessibleBuffer},
     command_buffer::{
         AutoCommandBufferBuilder, CommandBufferUsage, RenderPassBeginInfo, SubpassContents,
     },
     device::{Device, DeviceCreateInfo, QueueCreateInfo},
-    pipeline::graphics::viewport::Viewport,
+    pipeline::{
+        graphics::{
+            rasterization::{CullMode, FrontFace, RasterizationState},
+            vertex_input::BuffersDefinition,
+            viewport::{Viewport, ViewportState},
+        },
+        GraphicsPipeline, Pipeline, StateMode,
+    },
+    render_pass::Subpass,
     swapchain::{acquire_next_image, AcquireError, SwapchainCreateInfo, SwapchainCreationError},
     sync::{FlushError, GpuFuture},
 };
@@ -58,6 +68,47 @@ fn main() {
 
     let (mut swapchain, swapchain_images) = window::create_swapchain(&device, &surface).unwrap();
 
+    mod vs {
+        vulkano_shaders::shader! {
+            ty: "vertex",
+            src: "
+            #version 460
+            layout(location = 0) in vec3 position;
+            layout(push_constant) uniform FrameData {
+                float time;
+                mat4 mvp;
+            } frame_data;
+            layout(location = 0) out vec3 colour;
+            void main() {
+                colour = position * 0.5 + 0.5;
+                gl_Position = frame_data.mvp * vec4(position, 1.0);
+            }
+            ",
+            types_meta: {
+                #[derive(Clone, Copy, Default)]
+            }
+        }
+    }
+
+    mod fs {
+        vulkano_shaders::shader! {
+            ty: "fragment",
+            src: "
+            #version 460
+
+            layout(location = 0) in vec3 colour;
+            layout(location = 0) out vec4 frag_colour;
+
+            void main() {
+                frag_colour = vec4(colour, 1.0);
+            }
+            "
+        }
+    }
+
+    let vs = vs::load(device.clone()).unwrap();
+    let fs = fs::load(device.clone()).unwrap();
+
     let render_pass = vulkano::single_pass_renderpass!(
         device.clone(),
         attachments: {
@@ -75,14 +126,85 @@ fn main() {
     )
     .unwrap();
 
+    // Cube vertex data
+    const VERTICES: [window::Vertex; 36] = [
+        window::Vertex::new([-1.0, -1.0, -1.0]),
+        window::Vertex::new([-1.0, -1.0, 1.0]),
+        window::Vertex::new([-1.0, 1.0, 1.0]),
+        window::Vertex::new([1.0, 1.0, -1.0]),
+        window::Vertex::new([-1.0, -1.0, -1.0]),
+        window::Vertex::new([-1.0, 1.0, -1.0]),
+        window::Vertex::new([1.0, -1.0, 1.0]),
+        window::Vertex::new([-1.0, -1.0, -1.0]),
+        window::Vertex::new([1.0, -1.0, -1.0]),
+        window::Vertex::new([1.0, 1.0, -1.0]),
+        window::Vertex::new([1.0, -1.0, -1.0]),
+        window::Vertex::new([-1.0, -1.0, -1.0]),
+        window::Vertex::new([-1.0, -1.0, -1.0]),
+        window::Vertex::new([-1.0, 1.0, 1.0]),
+        window::Vertex::new([-1.0, 1.0, -1.0]),
+        window::Vertex::new([1.0, -1.0, 1.0]),
+        window::Vertex::new([-1.0, -1.0, 1.0]),
+        window::Vertex::new([-1.0, -1.0, -1.0]),
+        window::Vertex::new([-1.0, 1.0, 1.0]),
+        window::Vertex::new([-1.0, -1.0, 1.0]),
+        window::Vertex::new([1.0, -1.0, 1.0]),
+        window::Vertex::new([1.0, 1.0, 1.0]),
+        window::Vertex::new([1.0, -1.0, -1.0]),
+        window::Vertex::new([1.0, 1.0, -1.0]),
+        window::Vertex::new([1.0, -1.0, -1.0]),
+        window::Vertex::new([1.0, 1.0, 1.0]),
+        window::Vertex::new([1.0, -1.0, 1.0]),
+        window::Vertex::new([1.0, 1.0, 1.0]),
+        window::Vertex::new([1.0, 1.0, -1.0]),
+        window::Vertex::new([-1.0, 1.0, -1.0]),
+        window::Vertex::new([1.0, 1.0, 1.0]),
+        window::Vertex::new([-1.0, 1.0, -1.0]),
+        window::Vertex::new([-1.0, 1.0, 1.0]),
+        window::Vertex::new([1.0, 1.0, 1.0]),
+        window::Vertex::new([-1.0, 1.0, 1.0]),
+        window::Vertex::new([1.0, -1.0, 1.0]),
+    ];
+
+    let vertex_buffer = CpuAccessibleBuffer::from_data(
+        device.clone(),
+        BufferUsage {
+            vertex_buffer: true,
+            ..Default::default()
+        },
+        false,
+        VERTICES,
+    )
+    .unwrap();
+
+    let pipeline = GraphicsPipeline::start()
+        .render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
+        .vertex_input_state(BuffersDefinition::new().vertex::<window::Vertex>())
+        // .input_assembly_state(InputAssemblyState::default())
+        .vertex_shader(vs.entry_point("main").unwrap(), ())
+        .fragment_shader(fs.entry_point("main").unwrap(), ())
+        .viewport_state(ViewportState::viewport_dynamic_scissor_irrelevant())
+        .rasterization_state(RasterizationState {
+            cull_mode: StateMode::Fixed(CullMode::Back),
+            front_face: StateMode::Fixed(FrontFace::Clockwise),
+            ..Default::default()
+        })
+        .build(device.clone())
+        .unwrap();
+
     let mut viewport = Viewport {
         origin: [0.0, 0.0],
         dimensions: [0.0, 0.0],
         depth_range: 0.0..1.0,
     };
 
-    let mut framebuffers =
-        window::create_framebuffers(&swapchain_images, &render_pass, &mut viewport);
+    let mut perspective = Matrix4::identity();
+    let mut framebuffers = window::create_framebuffers(
+        &swapchain_images,
+        &render_pass,
+        &mut viewport,
+        &mut perspective,
+    );
 
     if cfg!(debug_assertions) {
         println!(
@@ -122,8 +244,12 @@ fn main() {
                             r => r.unwrap(),
                         };
                     swapchain = new_swapchain;
-                    framebuffers =
-                        window::create_framebuffers(&swapchain_images, &render_pass, &mut viewport);
+                    framebuffers = window::create_framebuffers(
+                        &swapchain_images,
+                        &render_pass,
+                        &mut viewport,
+                        &mut perspective,
+                    );
                     recreate_swapchain = false;
                 }
 
@@ -148,23 +274,42 @@ fn main() {
                 )
                 .unwrap();
 
-                // Some random light show
                 let t = app_timer.elapsed().as_millis() as f32 * 0.001;
-                let a = (t * 0.3).fract();
-                let b = 1.0 - (t * 0.1).fract();
-                let c = (a * b * 2.3).fract();
-                let clear_color = [a, b, c, 1.0];
+                let mvp: Matrix4<f32> = perspective
+                    * Matrix4::look_at_rh(
+                        Point3 {
+                            x: t.sin() * 10.0,
+                            y: t.cos() * 10.0,
+                            z: -3.0,
+                        },
+                        Point3 {
+                            x: 0.0,
+                            y: 0.0,
+                            z: 0.0,
+                        },
+                        Vector3::unit_z(),
+                    );
+                let push_constants = vs::ty::FrameData {
+                    time: t,
+                    mvp: mvp.into(),
+                    ..Default::default()
+                };
 
                 builder
                     .begin_render_pass(
                         RenderPassBeginInfo {
-                            clear_values: vec![Some(clear_color.into())],
+                            clear_values: vec![Some([0.0, 0.0, 1.0, 1.0].into())],
                             ..RenderPassBeginInfo::framebuffer(framebuffers[image_num].clone())
                         },
                         SubpassContents::Inline,
                     )
                     .unwrap()
                     .set_viewport(0, [viewport.clone()])
+                    .bind_pipeline_graphics(pipeline.clone())
+                    .bind_vertex_buffers(0, vertex_buffer.clone())
+                    .push_constants(pipeline.layout().clone(), 0, push_constants)
+                    .draw(VERTICES.len().try_into().unwrap(), 1, 0, 0)
+                    .unwrap()
                     .end_render_pass()
                     .unwrap();
 
