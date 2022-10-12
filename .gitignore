@@ -1,6 +1,7 @@
 ﻿# Binaries
 bin
 obj
+target
 
 # Editor files
 .idea
