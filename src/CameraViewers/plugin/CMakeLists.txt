@@ -1,5 +1,13 @@
 cmake_minimum_required(VERSION 3.16.0)
 
+set(LIB_DIR ${CMAKE_SOURCE_DIR}/../../../lib)
+
+option(BUILD_TEST "Build test application" ON)
+if (${BUILD_TEST})
+  set(CMAKE_TOOLCHAIN_FILE ${LIB_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake CACHE STRING "Vcpkg toolchain file")
+endif()
+
+
 project(unity-plugin)
 
 # Project settings
@@ -12,7 +20,11 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/bin/$<$<CONFIG:>:
 add_library(unity-plugin SHARED)
 set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "com.andough.cameraviewers.renderingplugin")
 
-target_include_directories(unity-plugin PRIVATE ${CMAKE_SOURCE_DIR}/../../../lib/UnityPluginAPI)
+target_include_directories(unity-plugin PRIVATE ${LIB_DIR}/UnityPluginAPI)
+
+if(${BUILD_TEST})
+  add_executable(test)  
+endif()
 
 # Source files
 add_subdirectory(src)

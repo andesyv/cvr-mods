@@ -1,3 +1,6 @@
 [submodule "lib/UnityPluginAPI"]
 	path = lib/UnityPluginAPI
 	url = git@github.com:StephenHodgson/Native-Unity-API.git
+[submodule "lib/vcpkg"]
+	path = lib/vcpkg
+	url = https://github.com/Microsoft/vcpkg.git
