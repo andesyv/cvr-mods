@@ -2,6 +2,7 @@
   "name": "unity-plugin",
   "version-string": "1.0.0",
   "dependencies": [
-    "glfw3"
+    "glfw3",
+    "glm"
   ]
 }

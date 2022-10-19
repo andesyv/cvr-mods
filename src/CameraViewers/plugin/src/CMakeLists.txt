@@ -10,4 +10,8 @@ if(${BUILD_TEST})
   # GLFW
   find_package(glfw3 CONFIG REQUIRED)
   target_link_libraries(test PRIVATE glfw)
+
+  # GLM
+  find_package(glm CONFIG REQUIRED)
+  target_link_libraries(test PRIVATE glm::glm)
 endif()
