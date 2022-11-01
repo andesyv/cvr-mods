@@ -23,7 +23,11 @@ set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "com.andough.camera
 target_include_directories(unity-plugin PRIVATE ${LIB_DIR}/UnityPluginAPI)
 
 if(${BUILD_TEST})
-  add_executable(test)  
+  add_executable(test)
+  if (WIN32)
+    target_compile_definitions(test PRIVATE _WIN32)
+  endif()
+  target_compile_definitions(test PRIVATE ROOT_DIR="${CMAKE_SOURCE_DIR}")
 endif()
 
 # Source files

@@ -7,6 +7,8 @@ import std;
 #include <string_view>
 #include <array>
 #include <memory>
+#include <filesystem>
+#include <ranges>
 #endif
 
 #include <glad/glad.h>
@@ -15,6 +17,10 @@ import std;
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 static constexpr std::string_view vs_shader_source = R"SHADER(#version 430 core
 layout(location = 0) in vec2 pos;
@@ -305,6 +311,87 @@ VAO create_plane() {
   return { .id = plane_vao, .vbo = plane_vbo };
 }
 
+#ifdef _WIN32
+std::pair<std::shared_ptr<HANDLE>, std::shared_ptr<HANDLE>> create_pipe() {
+  SECURITY_ATTRIBUTES security_attributes {
+    .nLength = sizeof(SECURITY_ATTRIBUTES),
+    .lpSecurityDescriptor = NULL,
+    .bInheritHandle = TRUE,
+  };
+
+  const auto deleter = [](auto* p){
+    if (p) {
+      CloseHandle(*p);
+      delete p;
+    }
+  };
+  std::shared_ptr<HANDLE> child_out_write{new HANDLE{NULL}, deleter}, child_out_read{new HANDLE{NULL}, deleter};
+  if (!CreatePipe(child_out_read.get(), child_out_write.get(), &security_attributes, 0) ) 
+  {
+    std::cout << "Failed to create pipe!" << std::endl;
+    return {};
+  }
+
+  if (!SetHandleInformation(*child_out_read, HANDLE_FLAG_INHERIT, 0))
+  {
+    std::cout << "Failed to set pipe flag!" << std::endl;
+    return {};
+  }
+
+  DWORD mode = PIPE_NOWAIT;
+  if (!SetNamedPipeHandleState(*child_out_read, &mode, NULL, NULL))
+  {
+    std::cout << "Failed to set pipe flag!" << std::endl;
+    return {};
+  }
+
+
+  return std::make_pair(std::move(child_out_read), std::move(child_out_write));
+}
+
+std::optional<PROCESS_INFORMATION> create_child_process(std::string cmd, std::shared_ptr<HANDLE> std_out) {
+  PROCESS_INFORMATION p_info;
+  STARTUPINFO s_info;
+ 
+  ZeroMemory( &p_info, sizeof(PROCESS_INFORMATION) );
+  ZeroMemory( &s_info, sizeof(STARTUPINFO) );
+ 
+  s_info.cb = sizeof(STARTUPINFO); 
+  s_info.hStdError = *std_out;
+  s_info.hStdOutput = *std_out;
+  //  s_info.hStdInput = g_hChildStd_IN_Rd;
+  s_info.dwFlags |= STARTF_USESTDHANDLES;
+ 
+  if (!CreateProcess(NULL, 
+    cmd.data(),
+    NULL,     // process security attributes 
+    NULL,     // primary thread security attributes 
+    TRUE,     // handles are inherited 
+    0,        // creation flags 
+    NULL,     // use parent's environment 
+    NULL,     // use parent's current directory 
+    &s_info,
+    &p_info
+  ))
+    return {};
+
+  return p_info;
+}
+
+void print_child_pipe(HANDLE pipe) {
+    static std::string buffer{};
+    constexpr std::size_t BUFFER_SIZE = 4096;
+    buffer.resize(BUFFER_SIZE);
+    DWORD bytesRead;
+    if (ReadFile(pipe, buffer.data(), BUFFER_SIZE, &bytesRead, NULL))
+    {
+      std::cout << "Child process:" << std::endl;
+      for (auto line : std::string_view{buffer.data(), bytesRead} | std::views::split('\n'))
+        std::cout << "\t\t" << std::string_view{line.begin(), line.end()} << std::endl;
+    }
+}
+#endif
+
 int main()
 {
   const auto program_start = std::chrono::steady_clock::now();
@@ -382,6 +469,28 @@ int main()
   }, nullptr);
 
   {
+    // Setup subprocess + pipe
+    // This part is unfortunately only implemented for Windows
+#ifdef _WIN32
+    auto [child_std_read, child_std_write] = create_pipe();
+    if (!child_std_read)
+      return -1;
+
+    constexpr static auto VIEWER_PATH = ROOT_DIR "\\..\\viewer\\target\\debug\\viewer.exe";
+    if (!std::filesystem::exists(std::filesystem::path{VIEWER_PATH}))
+    {
+      std::cout << "Could not find viewer executable!" << std::endl;
+      return -1;
+    }
+    auto process = create_child_process(VIEWER_PATH, std::move(child_std_write));
+    if (!process)
+    {
+      std::cout << "Failed to spawn process" << std::endl;
+      return -1;
+    }
+
+#endif
+
     // Setup scene:
     const auto shader{ create_shader() };
     if (!shader)
@@ -419,9 +528,23 @@ int main()
 
       glDrawArrays(GL_TRIANGLES, 0, 6);
 
+#ifdef _WIN32
+      print_child_pipe(*child_std_read);
+#endif
+
       glfwSwapBuffers(window);
       glfwPollEvents();
     }
+
+    
+#ifdef _WIN32
+    // Notify the child process it should close
+    if (!PostThreadMessageA(process->dwThreadId, WM_QUIT, NULL, NULL))
+      std::cout << "Failed to notify the child process it should close!" << std::endl;
+
+    CloseHandle(process->hProcess);
+    CloseHandle(process->hThread);
+#endif
 
     glUseProgram(0);
     glBindVertexArray(0);
