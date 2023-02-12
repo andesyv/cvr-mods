@@ -4,8 +4,8 @@ use bytemuck::{Pod, Zeroable};
 use cgmath::{Deg, Matrix4, PerspectiveFov};
 use vulkano::{
     device::{
-        physical::{PhysicalDevice, PhysicalDeviceType, QueueFamily},
-        Device, DeviceExtensions,
+        physical::{PhysicalDevice, PhysicalDeviceType},
+        Device, DeviceExtensions, QueueFlags,
     },
     image::{view::ImageView, ImageAccess, ImageUsage, SwapchainImage},
     impl_vertex,
@@ -19,14 +19,28 @@ use vulkano::{
     pipeline::graphics::viewport::Viewport,
     render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass},
     swapchain::{Surface, Swapchain, SwapchainCreateInfo},
-    Version,
+    Version, VulkanLibrary,
 };
 use vulkano_win::required_extensions;
 use winit::window::Window;
 
 pub const DEVICE_EXTENSIONS: DeviceExtensions = DeviceExtensions {
     khr_swapchain: true,
-    ..DeviceExtensions::none()
+    // khr_external_memory: true,
+    khr_external_semaphore: true,
+    khr_external_semaphore_win32: true,
+    khr_external_fence: true,
+    khr_external_fence_win32: true,
+    ..DeviceExtensions::empty()
+};
+
+pub const INSTANCE_EXTENSIONS: InstanceExtensions = InstanceExtensions {
+    ext_debug_utils: true,
+    khr_get_physical_device_properties2: true,
+    // khr_external_memory_capabilities: true,
+    khr_external_semaphore_capabilities: true,
+    khr_external_fence_capabilities: true,
+    ..InstanceExtensions::empty()
 };
 
 #[repr(C)]
@@ -44,24 +58,25 @@ impl Vertex {
 impl_vertex!(Vertex, position);
 
 pub fn create_instance() -> Arc<Instance> {
-    Instance::new(InstanceCreateInfo {
-        application_name: Some("Viewer".to_string()),
-        application_version: Version {
-            major: 1,
-            minor: 0,
-            patch: 0,
+    let library = VulkanLibrary::new().unwrap();
+    Instance::new(
+        library.clone(),
+        InstanceCreateInfo {
+            application_name: Some("Viewer".to_string()),
+            application_version: Version {
+                major: 1,
+                minor: 0,
+                patch: 0,
+            },
+            enabled_extensions: INSTANCE_EXTENSIONS.union(&required_extensions(&library)),
+            enabled_layers: vec![
+                // "VK_LAYER_LUNARG_standard_validation".to_string(), // The best one
+                "VK_LAYER_KHRONOS_validation".to_string(), // Likely more available
+            ],
+            enumerate_portability: true, // Allow non-conformant vulkan devices (e.g. MoltenVK)
+            ..Default::default()
         },
-        enabled_extensions: InstanceExtensions {
-            ext_debug_utils: true,
-            ..required_extensions()
-        },
-        enabled_layers: vec![
-            // "VK_LAYER_LUNARG_standard_validation".to_string(), // The best one
-            "VK_LAYER_KHRONOS_validation".to_string(), // Likely more available
-        ],
-        enumerate_portability: true, // Allow non-conformant vulkan devices (e.g. MoltenVK)
-        ..Default::default()
-    })
+    )
     .unwrap()
 }
 
@@ -102,11 +117,13 @@ pub unsafe fn create_debug_messenger(instance: &Arc<Instance>) -> DebugUtilsMess
                 warning: true,
                 information: true,
                 verbose: true,
+                ..Default::default()
             },
             message_type: DebugUtilsMessageType {
                 general: true,
                 validation: true,
                 performance: true,
+                ..Default::default()
             },
             ..DebugUtilsMessengerCreateInfo::user_callback(Arc::new(debug_message_callback))
         },
@@ -116,17 +133,23 @@ pub unsafe fn create_debug_messenger(instance: &Arc<Instance>) -> DebugUtilsMess
 
 pub fn find_physical_device<'a>(
     instance: &'a Arc<Instance>,
-    surface: &Surface<Window>,
-) -> Option<(PhysicalDevice<'a>, QueueFamily<'a>)> {
-    PhysicalDevice::enumerate(&instance)
+    surface: &Surface,
+) -> Option<(Arc<PhysicalDevice>, u32)> {
+    instance
+        .enumerate_physical_devices()
+        .ok()?
         .filter_map(|d| {
-            if d.supported_extensions().is_superset_of(&DEVICE_EXTENSIONS) {
-                d.queue_families()
-                    .filter(|q| {
-                        q.supports_graphics() && q.supports_surface(&surface).unwrap_or(false)
+            if d.supported_extensions().contains(&DEVICE_EXTENSIONS) {
+                d.queue_family_properties()
+                    .iter()
+                    .enumerate()
+                    .position(|(i, q)| {
+                        q.queue_flags.intersects(&QueueFlags {
+                            graphics: true,
+                            ..Default::default()
+                        }) && d.surface_support(i as u32, &surface).unwrap_or(false)
                     })
-                    .next()
-                    .and_then(|i| Some((d, i)))
+                    .map(|i| (d, i as u32))
             } else {
                 None
             }
@@ -140,8 +163,8 @@ pub fn find_physical_device<'a>(
 
 pub fn create_swapchain(
     device: &Arc<Device>,
-    surface: &Arc<Surface<Window>>,
-) -> Option<(Arc<Swapchain<Window>>, Vec<Arc<SwapchainImage<Window>>>)> {
+    surface: &Arc<Surface>,
+) -> Option<(Arc<Swapchain>, Vec<Arc<SwapchainImage>>)> {
     let surface_capabilities = device
         .physical_device()
         .surface_capabilities(surface, Default::default())
@@ -160,10 +183,16 @@ pub fn create_swapchain(
         SwapchainCreateInfo {
             min_image_count: surface_capabilities.min_image_count,
             image_format,
-            image_extent: surface.window().inner_size().into(),
+            image_extent: surface
+                .object()
+                .unwrap()
+                .downcast_ref::<Window>()
+                .unwrap()
+                .inner_size()
+                .into(),
             image_usage: ImageUsage {
                 color_attachment: true,
-                ..ImageUsage::none()
+                ..ImageUsage::empty()
             },
             ..Default::default()
         },
@@ -172,7 +201,7 @@ pub fn create_swapchain(
 }
 
 pub fn create_framebuffers(
-    images: &[Arc<SwapchainImage<Window>>],
+    images: &[Arc<SwapchainImage>],
     render_pass: &Arc<RenderPass>,
     viewport: &mut Viewport,
     perspective: &mut Matrix4<f32>,

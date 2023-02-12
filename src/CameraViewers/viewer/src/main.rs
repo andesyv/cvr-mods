@@ -1,12 +1,17 @@
-use std::time::Instant;
+use std::{ffi::c_void, sync::Arc, time::Instant};
 
 use cgmath::{Matrix4, Point3, SquareMatrix, Vector3};
+// use platform::get_allowed_external_semaphore_handle_types;
 use vulkano::{
     buffer::{BufferUsage, CpuAccessibleBuffer},
     command_buffer::{
-        AutoCommandBufferBuilder, CommandBufferUsage, RenderPassBeginInfo, SubpassContents,
+        allocator::StandardCommandBufferAllocator, AutoCommandBufferBuilder, CommandBufferUsage,
+        RenderPassBeginInfo, SubpassContents,
     },
-    device::{Device, DeviceCreateInfo, QueueCreateInfo},
+    device::{physical::PhysicalDevice, Device, DeviceCreateInfo, QueueCreateInfo},
+    format::Format,
+    image::{ImageCreateFlags, ImageUsage, ImmutableImage, StorageImage},
+    memory::{allocator::StandardMemoryAllocator, ExternalMemoryProperties},
     pipeline::{
         graphics::{
             rasterization::{CullMode, FrontFace, RasterizationState},
@@ -16,20 +21,43 @@ use vulkano::{
         GraphicsPipeline, Pipeline, StateMode,
     },
     render_pass::Subpass,
-    swapchain::{acquire_next_image, AcquireError, SwapchainCreateInfo, SwapchainCreationError},
-    sync::{FlushError, GpuFuture},
+    swapchain::{
+        acquire_next_image, AcquireError, SwapchainCreateInfo, SwapchainCreationError,
+        SwapchainPresentInfo,
+    },
+    sync::{
+        ExternalSemaphoreHandleType, ExternalSemaphoreHandleTypes, ExternalSemaphoreInfo,
+        FlushError, GpuFuture, Semaphore, SemaphoreCreateInfo, SemaphoreError,
+    },
 };
 use vulkano_win::VkSurfaceBuild;
 use winit::{
     dpi::PhysicalSize,
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
-    window::WindowBuilder,
+    window::{Window, WindowBuilder},
 };
 
-use crate::window::find_physical_device;
+use crate::{platform::{get_external_semaphore_type, print_handle}, window::find_physical_device};
 
+mod platform;
 mod window;
+
+fn create_external_semaphore(
+    device: Arc<Device>,
+    handle_type: ExternalSemaphoreHandleTypes,
+) -> Result<Arc<Semaphore>, SemaphoreError> {
+    Ok(Arc::new(Semaphore::new(
+        device,
+        SemaphoreCreateInfo {
+            export_handle_types: handle_type,
+            ..Default::default()
+        },
+    )?))
+}
+
+const WIDTH: u32 = 800;
+const HEIGHT: u32 = 600;
 
 fn main() {
     let app_timer = Instant::now();
@@ -41,11 +69,11 @@ fn main() {
     let event_loop = EventLoop::new();
     let surface = WindowBuilder::new()
         .with_title("Viewer")
-        .with_inner_size(PhysicalSize::new(800, 600))
+        .with_inner_size(PhysicalSize::new(WIDTH, HEIGHT))
         .build_vk_surface(&event_loop, instance.clone())
         .unwrap();
 
-    let (physical_device, queue_family) = find_physical_device(&instance, &surface).unwrap();
+    let (physical_device, queue_family_index) = find_physical_device(&instance, &surface).unwrap();
 
     if cfg!(debug_assertions) {
         println!(
@@ -56,10 +84,13 @@ fn main() {
     }
 
     let (device, mut queue) = Device::new(
-        physical_device,
+        physical_device.clone(),
         DeviceCreateInfo {
             enabled_extensions: window::DEVICE_EXTENSIONS,
-            queue_create_infos: vec![QueueCreateInfo::family(queue_family)],
+            queue_create_infos: vec![QueueCreateInfo {
+                queue_family_index,
+                ..Default::default()
+            }],
             ..Default::default()
         },
     )
@@ -67,6 +98,40 @@ fn main() {
     let queue = queue.next().unwrap();
 
     let (mut swapchain, swapchain_images) = window::create_swapchain(&device, &surface).unwrap();
+
+    let memory_allocator = StandardMemoryAllocator::new_default(device.clone());
+
+    // We're lazy so we don't care about checking for actual support and just guess that the platform specific handles are supported (win for windows and posix for unix)
+    // let image_ready = create_external_semaphore(&device);
+    // let image_processed = create_external_semaphore(&device);
+
+    // Logic taken from https://github.com/vulkano-rs/vulkano/blob/master/examples/src/bin/gl-interop.rs
+    // (which is based on https://github.com/KhronosGroup/Vulkan-Samples/blob/master/samples/extensions/open_gl_interop/open_gl_interop.cpp)
+
+    // TODO: Make a version that works on Windows (POSIX file descriptor handles only works on Unix)
+    // let image = StorageImage::new_with_exportable_fd(
+    //     &memory_allocator,
+    //     vulkano::image::ImageDimensions::Dim2d {
+    //         width: WIDTH,
+    //         height: HEIGHT,
+    //         array_layers: 1,
+    //     },
+    //     Format::R16G16B16A16_UNORM,
+    //     ImageUsage::SAMPLED | ImageUsage::TRANSFER_SRC | ImageUsage::TRANSFER_DST,
+    //     ImageCreateFlags::MUTABLE_FORMAT,
+    //     [queue.queue_family_index()],
+    // )
+    // .unwrap();
+
+    // let image_fd = image.export_posix_fd().unwrap();
+
+    let handle_type = get_external_semaphore_type(&physical_device).unwrap();
+
+    let acquire_sem = create_external_semaphore(device.clone(), handle_type.into()).unwrap();
+    let release_sem = create_external_semaphore(device.clone(), handle_type.into()).unwrap();
+
+    print_handle("OGL_begin", &release_sem, handle_type);
+    print_handle("OGL_end", &acquire_sem, handle_type);
 
     mod vs {
         vulkano_shaders::shader! {
@@ -85,7 +150,8 @@ fn main() {
             }
             ",
             types_meta: {
-                #[derive(Clone, Copy, Default)]
+                use bytemuck::{Pod, Zeroable};
+                #[derive(Clone, Copy, Default, Zeroable, Pod)]
             }
         }
     }
@@ -167,7 +233,7 @@ fn main() {
     ];
 
     let vertex_buffer = CpuAccessibleBuffer::from_data(
-        device.clone(),
+        &memory_allocator,
         BufferUsage {
             vertex_buffer: true,
             ..Default::default()
@@ -216,7 +282,11 @@ fn main() {
     let mut recreate_swapchain = false;
     let mut previous_frame_end = Some(vulkano::sync::now(device.clone()).boxed());
 
+    let command_buffer_allocator =
+        StandardCommandBufferAllocator::new(device.clone(), Default::default());
+
     event_loop.run(move |event, _, control_flow| {
+        let window = surface.object().unwrap().downcast_ref::<Window>().unwrap();
         match event {
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
@@ -227,7 +297,7 @@ fn main() {
                 ..
             } => recreate_swapchain = true,
             Event::RedrawEventsCleared => {
-                let dimensions = surface.window().inner_size();
+                let dimensions = window.inner_size();
                 if dimensions.width == 0 || dimensions.height == 0 {
                     return;
                 }
@@ -268,8 +338,8 @@ fn main() {
                 }
 
                 let mut builder = AutoCommandBufferBuilder::primary(
-                    device.clone(),
-                    queue.family(),
+                    &command_buffer_allocator,
+                    queue.queue_family_index(),
                     CommandBufferUsage::OneTimeSubmit,
                 )
                 .unwrap();
@@ -299,7 +369,9 @@ fn main() {
                     .begin_render_pass(
                         RenderPassBeginInfo {
                             clear_values: vec![Some([0.0, 0.0, 1.0, 1.0].into())],
-                            ..RenderPassBeginInfo::framebuffer(framebuffers[image_num].clone())
+                            ..RenderPassBeginInfo::framebuffer(
+                                framebuffers[image_num as usize].clone(),
+                            )
                         },
                         SubpassContents::Inline,
                     )
@@ -321,7 +393,10 @@ fn main() {
                     .join(acquire_future)
                     .then_execute(queue.clone(), command_buffer)
                     .unwrap()
-                    .then_swapchain_present(queue.clone(), swapchain.clone(), image_num)
+                    .then_swapchain_present(
+                        queue.clone(),
+                        SwapchainPresentInfo::swapchain_image_index(swapchain.clone(), image_num),
+                    )
                     .then_signal_fence_and_flush()
                 {
                     Ok(f) => previous_frame_end = Some(f.boxed()),
@@ -335,4 +410,14 @@ fn main() {
             _ => (),
         }
     });
+}
+
+#[test]
+fn handle_format_logic_test() {
+    // Difficult to check the actual functions, so we just check the logic instead
+    assert_eq!(format!("{:016x}", 1usize), "0000000000000001");
+    assert_eq!(format!("{:016x}", 1usize << 1), "0000000000000002");
+    assert_eq!(format!("{:016x}", 15usize), "000000000000000f");
+    assert_eq!(format!("{:016x}", 16usize), "0000000000000010");
+    assert_eq!(format!("{:016x}", usize::MAX), "ffffffffffffffff");
 }
