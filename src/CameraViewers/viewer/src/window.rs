@@ -26,7 +26,8 @@ use winit::window::Window;
 
 pub const DEVICE_EXTENSIONS: DeviceExtensions = DeviceExtensions {
     khr_swapchain: true,
-    // khr_external_memory: true,
+    khr_external_memory: true,
+    khr_external_memory_win32: true,
     khr_external_semaphore: true,
     khr_external_semaphore_win32: true,
     khr_external_fence: true,
@@ -37,7 +38,7 @@ pub const DEVICE_EXTENSIONS: DeviceExtensions = DeviceExtensions {
 pub const INSTANCE_EXTENSIONS: InstanceExtensions = InstanceExtensions {
     ext_debug_utils: true,
     khr_get_physical_device_properties2: true,
-    // khr_external_memory_capabilities: true,
+    khr_external_memory_capabilities: true,
     khr_external_semaphore_capabilities: true,
     khr_external_fence_capabilities: true,
     ..InstanceExtensions::empty()

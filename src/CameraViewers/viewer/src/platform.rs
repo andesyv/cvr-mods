@@ -1,8 +1,20 @@
 use std::{ffi::c_void, sync::Arc};
 use vulkano::{
+    buffer::{BufferUsage, ExternalBufferInfo},
     device::physical::PhysicalDevice,
-    sync::{ExternalSemaphoreHandleType, ExternalSemaphoreInfo, Semaphore},
+    format::Format,
+    image::{
+        sys::{ImageCreateInfo, RawImage},
+        ImageCreateFlags, ImageDimensions, ImageError, ImageFormatInfo, ImageUsage, StorageImage,
+    },
+    memory::{
+        allocator::{MemoryAllocator, MemoryUsage},
+        DedicatedAllocation, ExternalMemoryHandleType, ExternalMemoryHandleTypes,
+    },
+    sync::{ExternalSemaphoreHandleType, ExternalSemaphoreInfo, Semaphore, Sharing},
 };
+
+use crate::external_image::ExternalImage;
 
 // #[cfg(windows)]
 // pub const fn get_allowed_external_semaphore_handle_types() -> ExternalSemaphoreHandleTypes {
@@ -54,13 +66,49 @@ pub fn get_external_semaphore_type(
     None
 }
 
+pub fn get_external_memory_type(
+    physical_device: &PhysicalDevice,
+    usage: BufferUsage,
+) -> Option<ExternalMemoryHandleType> {
+    use ExternalMemoryHandleType::*;
+    // The preferred order is (Windows non-owning opaque handles, Windows owning opaque handles, Linux file descriptor handles)
+    // TODO: If this is slow, consider switching to VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT or VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_MAPPED_FOREIGN_MEMORY_BIT_EXT
+    // which should be directly mapped on the device (hopefully skipping the expensive operation of intermediate CPU copying)
+    for handle_type in [
+        D3D11TextureKmt,
+        D3D11Texture,
+        D3D12Resource,
+        D3D12Heap,
+        OpaqueWin32Kmt,
+        OpaqueWin32,
+        OpaqueFd,
+        DmaBuf,
+    ] {
+        println!("Handle Type: {:?}", handle_type);
+        let mut info = ExternalBufferInfo::handle_type(handle_type);
+        info.usage = usage;
+        if let Ok(properties) = physical_device.external_buffer_properties(info) {
+            println!("Properties: {:?}", properties);
+            if properties
+                .external_memory_properties
+                .compatible_handle_types
+                .intersects(&handle_type.into())
+                && properties.external_memory_properties.exportable
+            {
+                return Some(handle_type);
+            }
+        }
+    }
+    None
+}
+
 #[cfg(target_pointer_width = "64")]
 fn format_handle(raw_ptr: *const c_void) -> String {
     format!("{:016x}", raw_ptr as usize)
 }
 
 #[cfg(windows)]
-pub fn print_handle(
+pub fn print_semaphore_handle(
     identifier: &str,
     semaphore: &Arc<Semaphore>,
     handle_type: ExternalSemaphoreHandleType,
@@ -73,3 +121,30 @@ pub fn print_handle(
         format_handle(semaphore.export_win32_handle(handle_type).unwrap())
     );
 }
+
+#[cfg(windows)]
+pub fn print_memory_handle(
+    identifier: &str,
+    image: &Arc<ExternalImage>,
+    handle_type: ExternalMemoryHandleType,
+) {
+    // Should really properly format the handle, but my lazy ass just relies on the Debug trait instead
+
+    println!(
+        "Connection data: {{\"image\", \"{}\", \"{:?}\", \"{}\"}}",
+        identifier,
+        handle_type,
+        format_handle(image.export().unwrap())
+    );
+}
+
+// pub fn export_memory_handle(image: &StorageImage) -> Result<_, DeviceMemoryError> {
+//     let allocation = match image.inner.memory() {
+//         ImageMemory::Normal(a) => &a[0],
+//         _ => unreachable!(),
+//     };
+
+//     allocation
+//         .device_memory()
+//         .export_fd(ExternalMemoryHandleType::OpaqueFd)
+// }

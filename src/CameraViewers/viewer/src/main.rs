@@ -1,4 +1,4 @@
-use std::{ffi::c_void, sync::Arc, time::Instant};
+use std::{sync::Arc, time::Instant};
 
 use cgmath::{Matrix4, Point3, SquareMatrix, Vector3};
 // use platform::get_allowed_external_semaphore_handle_types;
@@ -8,10 +8,10 @@ use vulkano::{
         allocator::StandardCommandBufferAllocator, AutoCommandBufferBuilder, CommandBufferUsage,
         RenderPassBeginInfo, SubpassContents,
     },
-    device::{physical::PhysicalDevice, Device, DeviceCreateInfo, QueueCreateInfo},
+    device::{Device, DeviceCreateInfo, QueueCreateInfo},
     format::Format,
-    image::{ImageCreateFlags, ImageUsage, ImmutableImage, StorageImage},
-    memory::{allocator::StandardMemoryAllocator, ExternalMemoryProperties},
+    image::{ImageCreateFlags, ImageUsage},
+    memory::{allocator::StandardMemoryAllocator},
     pipeline::{
         graphics::{
             rasterization::{CullMode, FrontFace, RasterizationState},
@@ -26,7 +26,7 @@ use vulkano::{
         SwapchainPresentInfo,
     },
     sync::{
-        ExternalSemaphoreHandleType, ExternalSemaphoreHandleTypes, ExternalSemaphoreInfo,
+        ExternalSemaphoreHandleTypes,
         FlushError, GpuFuture, Semaphore, SemaphoreCreateInfo, SemaphoreError,
     },
 };
@@ -38,10 +38,17 @@ use winit::{
     window::{Window, WindowBuilder},
 };
 
-use crate::{platform::{get_external_semaphore_type, print_handle}, window::find_physical_device};
+use crate::{
+    platform::{
+        get_external_memory_type, get_external_semaphore_type,
+        print_semaphore_handle, print_memory_handle,
+    },
+    window::find_physical_device, external_image::ExternalImage,
+};
 
 mod platform;
 mod window;
+mod external_image;
 
 fn create_external_semaphore(
     device: Arc<Device>,
@@ -101,37 +108,45 @@ fn main() {
 
     let memory_allocator = StandardMemoryAllocator::new_default(device.clone());
 
-    // We're lazy so we don't care about checking for actual support and just guess that the platform specific handles are supported (win for windows and posix for unix)
-    // let image_ready = create_external_semaphore(&device);
-    // let image_processed = create_external_semaphore(&device);
-
     // Logic taken from https://github.com/vulkano-rs/vulkano/blob/master/examples/src/bin/gl-interop.rs
     // (which is based on https://github.com/KhronosGroup/Vulkan-Samples/blob/master/samples/extensions/open_gl_interop/open_gl_interop.cpp)
 
+    let semaphore_handle_type = get_external_semaphore_type(&physical_device).unwrap();
+    let memory_handle_type = get_external_memory_type(&physical_device, BufferUsage { transfer_src: true, transfer_dst: true, storage_texel_buffer: true, ..Default::default() }).unwrap();
+
+    let acquire_sem =
+        create_external_semaphore(device.clone(), semaphore_handle_type.into()).unwrap();
+    let release_sem =
+        create_external_semaphore(device.clone(), semaphore_handle_type.into()).unwrap();
+
+    print_semaphore_handle("OGL_begin", &release_sem, semaphore_handle_type);
+    print_semaphore_handle("OGL_end", &acquire_sem, semaphore_handle_type);
+
     // TODO: Make a version that works on Windows (POSIX file descriptor handles only works on Unix)
-    // let image = StorageImage::new_with_exportable_fd(
-    //     &memory_allocator,
-    //     vulkano::image::ImageDimensions::Dim2d {
-    //         width: WIDTH,
-    //         height: HEIGHT,
-    //         array_layers: 1,
-    //     },
-    //     Format::R16G16B16A16_UNORM,
-    //     ImageUsage::SAMPLED | ImageUsage::TRANSFER_SRC | ImageUsage::TRANSFER_DST,
-    //     ImageCreateFlags::MUTABLE_FORMAT,
-    //     [queue.queue_family_index()],
-    // )
-    // .unwrap();
+    let image = ExternalImage::new(
+        &memory_allocator,
+        vulkano::image::ImageDimensions::Dim2d {
+            width: WIDTH,
+            height: HEIGHT,
+            array_layers: 1,
+        },
+        Format::R16G16B16A16_UNORM,
+        ImageUsage {
+            sampled: true,
+            transfer_src: true,
+            transfer_dst: true,
+            ..Default::default()
+        },
+        ImageCreateFlags {
+            mutable_format: true,
+            ..Default::default()
+        },
+        [queue.queue_family_index()],
+        memory_handle_type,
+    )
+    .unwrap();
 
-    // let image_fd = image.export_posix_fd().unwrap();
-
-    let handle_type = get_external_semaphore_type(&physical_device).unwrap();
-
-    let acquire_sem = create_external_semaphore(device.clone(), handle_type.into()).unwrap();
-    let release_sem = create_external_semaphore(device.clone(), handle_type.into()).unwrap();
-
-    print_handle("OGL_begin", &release_sem, handle_type);
-    print_handle("OGL_end", &acquire_sem, handle_type);
+    print_memory_handle("OGL_buffer", &image, memory_handle_type);
 
     mod vs {
         vulkano_shaders::shader! {
