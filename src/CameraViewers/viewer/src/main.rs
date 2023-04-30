@@ -11,7 +11,7 @@ use vulkano::{
     device::{Device, DeviceCreateInfo, QueueCreateInfo},
     format::Format,
     image::{ImageCreateFlags, ImageUsage},
-    memory::{allocator::StandardMemoryAllocator},
+    memory::allocator::StandardMemoryAllocator,
     pipeline::{
         graphics::{
             rasterization::{CullMode, FrontFace, RasterizationState},
@@ -26,8 +26,8 @@ use vulkano::{
         SwapchainPresentInfo,
     },
     sync::{
-        ExternalSemaphoreHandleTypes,
-        FlushError, GpuFuture, Semaphore, SemaphoreCreateInfo, SemaphoreError,
+        ExternalSemaphoreHandleTypes, FlushError, GpuFuture, Semaphore, SemaphoreCreateInfo,
+        SemaphoreError,
     },
 };
 use vulkano_win::VkSurfaceBuild;
@@ -39,16 +39,17 @@ use winit::{
 };
 
 use crate::{
+    external_image::ExternalImage,
     platform::{
-        get_external_memory_type, get_external_semaphore_type,
-        print_semaphore_handle, print_memory_handle,
+        get_external_memory_type, get_external_semaphore_type, print_memory_handle,
+        print_semaphore_handle,
     },
-    window::find_physical_device, external_image::ExternalImage,
+    window::find_physical_device,
 };
 
+mod external_image;
 mod platform;
 mod window;
-mod external_image;
 
 fn create_external_semaphore(
     device: Arc<Device>,
@@ -112,7 +113,16 @@ fn main() {
     // (which is based on https://github.com/KhronosGroup/Vulkan-Samples/blob/master/samples/extensions/open_gl_interop/open_gl_interop.cpp)
 
     let semaphore_handle_type = get_external_semaphore_type(&physical_device).unwrap();
-    let memory_handle_type = get_external_memory_type(&physical_device, BufferUsage { transfer_src: true, transfer_dst: true, storage_texel_buffer: true, ..Default::default() }).unwrap();
+    let memory_handle_type = get_external_memory_type(
+        &physical_device,
+        BufferUsage {
+            transfer_src: true,
+            transfer_dst: true,
+            storage_texel_buffer: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
 
     let acquire_sem =
         create_external_semaphore(device.clone(), semaphore_handle_type.into()).unwrap();

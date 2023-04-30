@@ -9,6 +9,7 @@ import std;
 #include <memory>
 #include <filesystem>
 #include <ranges>
+#include <regex>
 #endif
 
 #include <glad/glad.h>
@@ -21,6 +22,9 @@ import std;
 #ifdef _WIN32
 #include <windows.h>
 #endif
+
+constexpr std::size_t WIDTH = 800;
+constexpr std::size_t HEIGHT = 600;
 
 static constexpr std::string_view vs_shader_source = R"SHADER(#version 430 core
 layout(location = 0) in vec2 pos;
@@ -242,6 +246,55 @@ struct VAO {
   }
 };
 
+struct Semaphore {
+  std::optional<GLuint> id{};
+
+  Semaphore(std::optional<GLuint> _id = {}) : id{_id} {}
+  Semaphore(const Semaphore&) = delete;
+  Semaphore(Semaphore&& rhs) {
+    std::swap(id, rhs.id);
+  }
+
+  Semaphore& operator=(const Semaphore&) = delete;
+  Semaphore& operator=(Semaphore&& rhs) {
+    std::swap(id, rhs.id);
+    return *this;
+  }
+
+  ~Semaphore() {
+    if (id)
+      glDeleteSemaphoresEXT(1, &(*id));
+  }
+};
+
+struct ExternalTexture {
+  GLuint id;
+  GLuint memory_id;
+
+  ExternalTexture(GLuint _id, GLuint _memory_id)
+    : id{_id}, memory_id{_memory_id} {}
+
+  ~ExternalTexture() {
+    glDeleteTextures(1, &id);
+  }
+};
+
+struct ConnectionData {
+  enum class Type {
+    Semaphore,
+    Image
+  };
+
+  Type type;
+  std::string identifier;
+#ifdef _WIN32
+  HANDLE handle;
+#endif
+  std::string handle_type;
+  std::optional<std::size_t> memory_allocation_size;
+  std::optional<std::string> memory_image_format;
+};
+
 std::unique_ptr<Shader> create_shader() {
   GLuint vs_shader{ glCreateShader(GL_VERTEX_SHADER) }, fs_shader{ glCreateShader(GL_FRAGMENT_SHADER) };
   constexpr std::array vs_shader_sources{ vs_shader_source.data() }, fs_shader_sources{ fs_shader_source.data() };
@@ -378,19 +431,115 @@ std::optional<PROCESS_INFORMATION> create_child_process(std::string cmd, std::sh
   return p_info;
 }
 
-void print_child_pipe(HANDLE pipe) {
-    static std::string buffer{};
-    constexpr std::size_t BUFFER_SIZE = 4096;
-    buffer.resize(BUFFER_SIZE);
-    DWORD bytesRead;
-    if (ReadFile(pipe, buffer.data(), BUFFER_SIZE, &bytesRead, NULL))
-    {
-      std::cout << "Child process:" << std::endl;
-      for (auto line : std::string_view{buffer.data(), bytesRead} | std::views::split('\n'))
-        std::cout << "\t\t" << std::string_view{line.begin(), line.end()} << std::endl;
-    }
+std::string extract_from_child_pipe(HANDLE pipe) {
+  static std::string buffer{};
+  constexpr std::size_t BUFFER_SIZE = 4096;
+  buffer.resize(BUFFER_SIZE);
+  DWORD bytesRead;
+  std::string out{};
+  out.reserve(BUFFER_SIZE);
+  
+  while (ReadFile(pipe, buffer.data(), BUFFER_SIZE, &bytesRead, NULL))
+    out.append(std::string_view{buffer.data(), bytesRead});
+
+  return out;
+}
+
+std::vector<ConnectionData> fetch_connection_data_from_child_pipe_output(std::string_view child_pipe_output) {
+  const static std::regex line_match{"Connection data: {.*}", std::regex_constants::basic};
+  const static std::regex sub_match{"\"[a-zA-Z0-9_]*\"", std::regex_constants::basic};
+  std::vector<ConnectionData> data;
+
+  for (std::regex_iterator it{child_pipe_output.begin(), child_pipe_output.end(), line_match}; it != decltype(it){}; ++it) {
+    auto match{ *it };
+    const auto sub_str{ match.str() };
+
+    std::regex_iterator sub_match_it{sub_str.begin(), sub_str.end(), sub_match};
+    const auto sub_matches = std::ranges::subrange{sub_match_it, decltype(sub_match_it){}} | std::views::transform([](auto match){
+      std::string s{ match.str() };
+      return s.substr(1, s.size() - 2);
+    }) | std::ranges::to<std::vector<std::string>>();
+
+    static_assert(4 <= sizeof(std::size_t) && 4 <= sizeof(long long) && 4 <= sizeof(HANDLE), "Program requries 64 bit pointer types");
+
+    const auto mem_address{ std::stoll(sub_matches.at(3), nullptr, 16) };
+    if (mem_address <= 0)
+      continue;
+
+    HANDLE handle{ reinterpret_cast<void*>(static_cast<std::size_t>(mem_address)) };
+
+    data.push_back(ConnectionData {
+      .type = sub_matches.at(0) == "semaphore" ? ConnectionData::Type::Semaphore : ConnectionData::Type::Image,
+      .identifier = sub_matches.at(1),
+      .handle = handle,
+      .handle_type = sub_matches.at(2),
+      .memory_allocation_size = 4 < sub_matches.size() ? std::make_optional<std::size_t>(std::stoll(sub_matches.at(4))) : std::nullopt,
+      .memory_image_format = 5 < sub_matches.size() ? std::make_optional(sub_matches.at(5)) : std::nullopt,
+    });
+  }
+
+  return data;
 }
 #endif
+
+void print_child_pipe(std::string_view child_pipe_output) {
+  if (child_pipe_output.empty())
+    return;
+
+  std::cout << "Child process:" << std::endl;
+  for (auto line : child_pipe_output | std::views::split('\n') | std::views::transform([](auto&& subrange){ return std::string_view{ subrange.begin(), subrange.end() }; }))
+    std::cout << "\t\t" << line << std::endl;
+}
+
+std::pair<Semaphore, Semaphore> create_semaphores_from_connection_data(const std::vector<ConnectionData>& connection_data) {
+  Semaphore begin, end;
+  for (const auto& data : connection_data) {
+    if (data.identifier != "OGL_begin" && data.identifier != "OGL_end")
+      continue;
+
+    auto& semaphore{ data.identifier == "OGL_begin" ? begin : end };
+    GLuint id;
+    glGenSemaphoresEXT(1, &id);
+#ifdef _WIN32
+    if (data.handle_type != "OpaqueWin32Kmt")
+      throw std::logic_error{"Handle type is not implemented"};
+    glImportSemaphoreWin32HandleEXT(id, GL_HANDLE_TYPE_OPAQUE_WIN32_KMT_EXT, data.handle);
+#endif
+    semaphore = {id};
+  }
+
+  return { std::move(begin), std::move(end) };
+}
+
+std::optional<ExternalTexture> create_texture_from_connection_data(const std::vector<ConnectionData>& connection_data) {
+  for (const auto& data : connection_data) {
+    if (data.type != ConnectionData::Type::Image)
+      continue;
+
+    GLuint texture_id, memory_id;
+    glCreateMemoryObjectsEXT(1, &memory_id);
+    if (!data.memory_allocation_size)
+      throw std::logic_error{"Memory connection data requires a memory allocation size"};
+#ifdef _WIN32
+    if (data.handle_type != "OpaqueWin32Kmt")
+      throw std::logic_error{"Handle type is not implemented"};
+    glImportMemoryWin32HandleEXT(memory_id, *data.memory_allocation_size, GL_HANDLE_TYPE_OPAQUE_WIN32_KMT_EXT, data.handle);
+#endif
+
+    glGenTextures(1, &texture_id);
+	  glBindTexture(GL_TEXTURE_2D, texture_id);
+
+    // GLuint texture, GLsizei levels, GLenum internalFormat, GLsizei width, GLsizei height, GLuint memory, GLuint64 offset
+    if (data.memory_image_format != "R16G16B16A16_UNORM")
+      throw std::logic_error{"Unsupported format"};
+    glTextureStorageMem2DEXT(texture_id, 1, GL_RGBA16UI, WIDTH, HEIGHT, memory_id, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    return ExternalTexture{ texture_id, memory_id };
+  }
+
+  return std::nullopt;
+}
 
 int main()
 {
@@ -408,7 +557,7 @@ int main()
   glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE); // uncomment this statement to fix compilation on OS X
 #endif
 
-  GLFWwindow *window = glfwCreateWindow(800, 600, "Viewer test", NULL, NULL);
+  GLFWwindow *window = glfwCreateWindow(WIDTH, HEIGHT, "Viewer test", NULL, NULL);
 
   if (window == NULL)
   {
@@ -429,6 +578,11 @@ int main()
     std::cout << "Failed to initialize GLAD" << std::endl;
     return -1;
   }
+  else if (glGenSemaphoresEXT == nullptr || glCreateMemoryObjectsEXT == nullptr)
+	{
+		std::cout << "Extension GL_EXT_memory_object or GL_EXT_semaphore is not missing." << std::endl;
+    return -1;
+	}
 
   int versionMajor, versionMinor;
   glGetIntegerv(GL_MAJOR_VERSION, &versionMajor);
@@ -488,8 +642,25 @@ int main()
       std::cout << "Failed to spawn process" << std::endl;
       return -1;
     }
-
 #endif
+
+    std::vector<ConnectionData> connection_data{};
+    while (connection_data.empty()) {
+#ifdef _WIN32
+      std::string child_pipe_output{ extract_from_child_pipe(*child_std_read) };
+      print_child_pipe(child_pipe_output);
+      connection_data = fetch_connection_data_from_child_pipe_output(child_pipe_output);
+#endif
+    }
+
+    std::cout << "Found connection data: " << std::endl;
+    for (const auto& data : connection_data)
+      std::cout << std::format("{{ type: {}, identifier: {} }}", data.type == ConnectionData::Type::Semaphore ? "Semaphore" : "Image", data.identifier) << std::endl;
+
+    auto [begin_semaphore, end_semaphore] = create_semaphores_from_connection_data(connection_data);
+    const auto shared_texture = create_texture_from_connection_data(connection_data);
+    if (!shared_texture)
+      throw std::runtime_error{"Couldn't fetch shared texture"};
 
     // Setup scene:
     const auto shader{ create_shader() };
@@ -529,7 +700,7 @@ int main()
       glDrawArrays(GL_TRIANGLES, 0, 6);
 
 #ifdef _WIN32
-      print_child_pipe(*child_std_read);
+      print_child_pipe(extract_from_child_pipe(*child_std_read));
 #endif
 
       glfwSwapBuffers(window);

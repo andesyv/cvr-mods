@@ -6,16 +6,16 @@ use vulkano::{
     format::Format,
     image::{
         sys::{Image, ImageCreateInfo, ImageMemory, RawImage},
-        ImageCreateFlags, ImageDimensions, ImageFormatInfo, ImageUsage, ImageError,
+        ImageCreateFlags, ImageDimensions, ImageError, ImageFormatInfo, ImageUsage,
     },
     memory::{
-        allocator::{MemoryAllocator, MemoryUsage, AllocationCreationError},
+        allocator::{AllocationCreationError, MemoryAllocator, MemoryUsage},
         DedicatedAllocation, DeviceMemory, DeviceMemoryError, ExternalMemoryHandleType,
     },
-    sync::{ExternalSemaphoreHandleTypes, Sharing},
-    OomError,
+    sync::Sharing,
+    DeviceSize,
+    // OomError,
     VulkanError,
-    // fns::DeviceFunctions,
 };
 
 #[derive(Debug)]
@@ -27,10 +27,10 @@ pub struct ExternalImage {
 #[derive(Debug)]
 pub enum ExternalImageError {
     ImageError(ImageError),
-    OomError(OomError),
+    // OomError(OomError),
     AllocationCreationError(AllocationCreationError),
     VulkanError(VulkanError),
-    Unimplemented,
+    // Unimplemented,
 }
 
 impl From<ImageError> for ExternalImageError {
@@ -46,32 +46,10 @@ impl From<AllocationCreationError> for ExternalImageError {
 }
 
 impl From<VulkanError> for ExternalImageError {
-  fn from(error: VulkanError) -> Self {
-      ExternalImageError::VulkanError(error)
-  }
+    fn from(error: VulkanError) -> Self {
+        ExternalImageError::VulkanError(error)
+    }
 }
-
-struct ExternalImageCreateInfo {
-    dimensions: ImageDimensions,
-    external_handle_types: ExternalSemaphoreHandleTypes,
-}
-
-// impl Into<UnsafeImageCreateInfo> for ExternalImageCreateInfo {
-//     fn into(self) -> UnsafeImageCreateInfo {
-//         UnsafeImageCreateInfo {
-//             dimensions: self.dimensions,
-//             format: Some(Format::R8G8B8A8_UNORM),
-//             initial_layout: ImageLayout::Undefined,
-//             usage: ImageUsage {
-//                 sampled: true,
-//                 color_attachment: true,
-//                 ..ImageUsage::none()
-//             },
-//             external_memory_handle_types: get_allowed_external_memory_handle_types(),
-//             ..Default::default()
-//         }
-//     }
-// }
 
 impl ExternalImage {
     // pub fn new(
@@ -262,12 +240,24 @@ impl ExternalImage {
         memory.export_fd(handle_type)
     }
 
-    pub fn export(&self) -> Result<*mut std::ffi::c_void, DeviceMemoryError> {
+    fn get_device_memory(&self) -> &DeviceMemory {
         let allocation = match self.inner.memory() {
             ImageMemory::Normal(a) => &a[0],
             _ => unreachable!(),
         };
 
-        Self::export_memory(allocation.device_memory(), self.handle_type)
+        allocation.device_memory()
+    }
+
+    pub fn export(&self) -> Result<*mut std::ffi::c_void, DeviceMemoryError> {
+        Self::export_memory(self.get_device_memory(), self.handle_type)
+    }
+
+    pub fn device_memory_allocation_size(&self) -> DeviceSize {
+        self.get_device_memory().allocation_size()
+    }
+
+    pub fn format(&self) -> Format {
+        self.inner.format().unwrap()
     }
 }

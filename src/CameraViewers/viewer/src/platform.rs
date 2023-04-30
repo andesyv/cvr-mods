@@ -2,16 +2,8 @@ use std::{ffi::c_void, sync::Arc};
 use vulkano::{
     buffer::{BufferUsage, ExternalBufferInfo},
     device::physical::PhysicalDevice,
-    format::Format,
-    image::{
-        sys::{ImageCreateInfo, RawImage},
-        ImageCreateFlags, ImageDimensions, ImageError, ImageFormatInfo, ImageUsage, StorageImage,
-    },
-    memory::{
-        allocator::{MemoryAllocator, MemoryUsage},
-        DedicatedAllocation, ExternalMemoryHandleType, ExternalMemoryHandleTypes,
-    },
-    sync::{ExternalSemaphoreHandleType, ExternalSemaphoreInfo, Semaphore, Sharing},
+    memory::ExternalMemoryHandleType,
+    sync::{ExternalSemaphoreHandleType, ExternalSemaphoreInfo, Semaphore},
 };
 
 use crate::external_image::ExternalImage;
@@ -131,10 +123,12 @@ pub fn print_memory_handle(
     // Should really properly format the handle, but my lazy ass just relies on the Debug trait instead
 
     println!(
-        "Connection data: {{\"image\", \"{}\", \"{:?}\", \"{}\"}}",
+        "Connection data: {{\"image\", \"{}\", \"{:?}\", \"{}\", size: \"{}\", format: \"{:?}\" }}",
         identifier,
         handle_type,
-        format_handle(image.export().unwrap())
+        format_handle(image.export().unwrap()),
+        image.as_ref().device_memory_allocation_size(),
+        image.format()
     );
 }
 
