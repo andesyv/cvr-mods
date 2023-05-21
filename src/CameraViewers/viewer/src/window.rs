@@ -48,15 +48,16 @@ pub const INSTANCE_EXTENSIONS: InstanceExtensions = InstanceExtensions {
 #[derive(Clone, Copy, Debug, Default, Zeroable, Pod)]
 pub struct Vertex {
     position: [f32; 3],
+    tex_coord: [f32; 2]
 }
 
 impl Vertex {
-    pub const fn new(position: [f32; 3]) -> Self {
-        Vertex { position }
+    pub const fn new(position: [f32; 3], tex_coord: [f32; 2]) -> Self {
+        Vertex { position, tex_coord }
     }
 }
 
-impl_vertex!(Vertex, position);
+impl_vertex!(Vertex, position, tex_coord);
 
 pub fn create_instance() -> Arc<Instance> {
     let library = VulkanLibrary::new().unwrap();

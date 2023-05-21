@@ -246,6 +246,18 @@ struct VAO {
   }
 };
 
+struct ExternalTexture {
+  GLuint id;
+  GLuint memory_id;
+
+  ExternalTexture(GLuint _id, GLuint _memory_id)
+    : id{_id}, memory_id{_memory_id} {}
+
+  ~ExternalTexture() {
+    glDeleteTextures(1, &id);
+  }
+};
+
 struct Semaphore {
   std::optional<GLuint> id{};
 
@@ -261,21 +273,55 @@ struct Semaphore {
     return *this;
   }
 
+  void wait(const ExternalTexture& texture) {
+    GLenum src_layout = GL_LAYOUT_COLOR_ATTACHMENT_EXT;
+    glWaitSemaphoreEXT(*id, 0, nullptr, 1, &texture.id, &src_layout);
+  }
+
+  void signal(const ExternalTexture& texture) {
+    GLenum dst_layout = GL_LAYOUT_SHADER_READ_ONLY_EXT;
+    glSignalSemaphoreEXT(*id, 0, nullptr, 1, &texture.id, &dst_layout);
+  }
+
   ~Semaphore() {
     if (id)
       glDeleteSemaphoresEXT(1, &(*id));
   }
 };
 
-struct ExternalTexture {
+struct Framebuffer {
   GLuint id;
-  GLuint memory_id;
+  GLuint depth_tex_id;
 
-  ExternalTexture(GLuint _id, GLuint _memory_id)
-    : id{_id}, memory_id{_memory_id} {}
+  Framebuffer(const ExternalTexture& texture) {
+    glGenFramebuffers(1, &id);
+    glBindFramebuffer(GL_FRAMEBUFFER, id);
 
-  ~ExternalTexture() {
-    glDeleteTextures(1, &id);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture.id, 0);
+
+    // Depthbuffer
+    glGenRenderbuffers(1, &depth_tex_id);
+    glBindRenderbuffer(GL_RENDERBUFFER, depth_tex_id);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, WIDTH, HEIGHT);
+
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, depth_tex_id);
+
+    if(glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+      throw std::runtime_error{"Failed to create framebuffer"};    
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  }
+
+  void bind() {
+    glBindFramebuffer(GL_FRAMEBUFFER, id);
+  }
+
+  void unbind() {
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  }
+
+  ~Framebuffer() {
+    glDeleteFramebuffers(1, &id);
   }
 };
 
@@ -444,6 +490,7 @@ std::string extract_from_child_pipe(HANDLE pipe) {
 
   return out;
 }
+#endif
 
 std::vector<ConnectionData> fetch_connection_data_from_child_pipe_output(std::string_view child_pipe_output) {
   const static std::regex line_match{"Connection data: {.*}", std::regex_constants::basic};
@@ -460,6 +507,7 @@ std::vector<ConnectionData> fetch_connection_data_from_child_pipe_output(std::st
       return s.substr(1, s.size() - 2);
     }) | std::ranges::to<std::vector<std::string>>();
 
+#ifdef _WIN32
     static_assert(4 <= sizeof(std::size_t) && 4 <= sizeof(long long) && 4 <= sizeof(HANDLE), "Program requries 64 bit pointer types");
 
     const auto mem_address{ std::stoll(sub_matches.at(3), nullptr, 16) };
@@ -467,6 +515,22 @@ std::vector<ConnectionData> fetch_connection_data_from_child_pipe_output(std::st
       continue;
 
     HANDLE handle{ reinterpret_cast<void*>(static_cast<std::size_t>(mem_address)) };
+
+    if (!GetHandleInformation(handle, 0)) {
+      LPTSTR error_msg{ nullptr };
+      if (FormatMessage(
+        FORMAT_MESSAGE_ALLOCATE_BUFFER | 
+        FORMAT_MESSAGE_FROM_SYSTEM |
+        FORMAT_MESSAGE_IGNORE_INSERTS,
+        NULL,
+        GetLastError(),
+        MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+        (LPTSTR) &error_msg,
+        0, NULL) == 0)
+          throw std::runtime_error{ std::format("Ironically, fetching the error string failed with error code {:x}", GetLastError()) };
+      
+      throw std::runtime_error{ std::format("Handle is invalid. Error: {}", error_msg) };
+    }
 
     data.push_back(ConnectionData {
       .type = sub_matches.at(0) == "semaphore" ? ConnectionData::Type::Semaphore : ConnectionData::Type::Image,
@@ -476,11 +540,11 @@ std::vector<ConnectionData> fetch_connection_data_from_child_pipe_output(std::st
       .memory_allocation_size = 4 < sub_matches.size() ? std::make_optional<std::size_t>(std::stoll(sub_matches.at(4))) : std::nullopt,
       .memory_image_format = 5 < sub_matches.size() ? std::make_optional(sub_matches.at(5)) : std::nullopt,
     });
+#endif
   }
 
   return data;
 }
-#endif
 
 void print_child_pipe(std::string_view child_pipe_output) {
   if (child_pipe_output.empty())
@@ -533,6 +597,8 @@ std::optional<ExternalTexture> create_texture_from_connection_data(const std::ve
     if (data.memory_image_format != "R16G16B16A16_UNORM")
       throw std::logic_error{"Unsupported format"};
     glTextureStorageMem2DEXT(texture_id, 1, GL_RGBA16UI, WIDTH, HEIGHT, memory_id, 0);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glBindTexture(GL_TEXTURE_2D, 0);
 
     return ExternalTexture{ texture_id, memory_id };
@@ -549,7 +615,7 @@ int main()
   // ------------------------------
   glfwInit();
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-  glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+  glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 5);
   glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
   glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
 
@@ -619,7 +685,10 @@ int main()
     };
     
     const std::string_view msg_str{message, static_cast<std::size_t>(length)};
-    std::cout << std::format("OpenGL: {{ source: {}, type: {}, severity: {}, message: {} }}", sources.at(source), types.at(type), severities.at(severity), msg_str) << std::endl;
+    const auto msg = std::format("OpenGL: {{ source: {}, type: {}, severity: {}, message: {} }}", sources.at(source), types.at(type), severities.at(severity), msg_str);
+    std::cout << msg << std::endl;
+    if (severity <= GL_DEBUG_SEVERITY_MEDIUM)
+      throw std::runtime_error{msg};
   }, nullptr);
 
   {
@@ -648,9 +717,9 @@ int main()
     while (connection_data.empty()) {
 #ifdef _WIN32
       std::string child_pipe_output{ extract_from_child_pipe(*child_std_read) };
+#endif
       print_child_pipe(child_pipe_output);
       connection_data = fetch_connection_data_from_child_pipe_output(child_pipe_output);
-#endif
     }
 
     std::cout << "Found connection data: " << std::endl;
@@ -669,6 +738,8 @@ int main()
 
     glUseProgram(shader->id);
     auto plane{ create_plane() };
+
+    Framebuffer shared_texture_framebuffer{ *shared_texture };
 
     glEnable(GL_CULL_FACE);
     glDisable(GL_DEPTH_TEST);
@@ -691,6 +762,10 @@ int main()
       const auto v_mat{ glm::lookAt(glm::vec3{std::sin(t) * 10.f, 1.f, std::cos(t) * 10.f}, {}, glm::vec3{0.f, 1.f, 0.f}) };
       const auto mvp{ glm::inverse(p_mat * v_mat) };
 
+      // Wait for rendering to be ready
+      begin_semaphore.wait(*shared_texture);
+
+      shared_texture_framebuffer.bind();
       glClearColor(0.2f, 0.3f, t, 1.0f);
       glClear(GL_COLOR_BUFFER_BIT);
 
@@ -698,6 +773,14 @@ int main()
       glUniform1f(1, t * 3.0);
 
       glDrawArrays(GL_TRIANGLES, 0, 6);
+      shared_texture_framebuffer.unbind();
+
+      // Signal the Vulkan app that OpenGL rendering is done
+      end_semaphore.signal(*shared_texture);
+
+      // OpenGL usually chooses itself when to flush commands to the GPU, but since the Vulkan implementation
+      // is waiting for synchronization from OpenGL we need to explicitly flush commands to the GPU every frame.
+      glFlush();
 
 #ifdef _WIN32
       print_child_pipe(extract_from_child_pipe(*child_std_read));

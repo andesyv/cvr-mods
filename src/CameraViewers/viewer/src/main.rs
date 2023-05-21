@@ -6,11 +6,14 @@ use vulkano::{
     buffer::{BufferUsage, CpuAccessibleBuffer},
     command_buffer::{
         allocator::StandardCommandBufferAllocator, AutoCommandBufferBuilder, CommandBufferUsage,
-        RenderPassBeginInfo, SubpassContents,
+        RenderPassBeginInfo, SemaphoreSubmitInfo, SubmitInfo, SubpassContents,
+    },
+    descriptor_set::{
+        allocator::StandardDescriptorSetAllocator, PersistentDescriptorSet, WriteDescriptorSet,
     },
     device::{Device, DeviceCreateInfo, QueueCreateInfo},
     format::Format,
-    image::{ImageCreateFlags, ImageUsage},
+    image::{view::ImageView, ImageCreateFlags, ImageUsage},
     memory::allocator::StandardMemoryAllocator,
     pipeline::{
         graphics::{
@@ -18,9 +21,10 @@ use vulkano::{
             vertex_input::BuffersDefinition,
             viewport::{Viewport, ViewportState},
         },
-        GraphicsPipeline, Pipeline, StateMode,
+        GraphicsPipeline, Pipeline, PipelineBindPoint, StateMode,
     },
     render_pass::Subpass,
+    sampler::{Filter, Sampler, SamplerAddressMode, SamplerCreateInfo},
     swapchain::{
         acquire_next_image, AcquireError, SwapchainCreateInfo, SwapchainCreationError,
         SwapchainPresentInfo,
@@ -158,19 +162,22 @@ fn main() {
 
     print_memory_handle("OGL_buffer", &image, memory_handle_type);
 
+    let image_view = ImageView::new_default(image.clone()).unwrap();
+
     mod vs {
         vulkano_shaders::shader! {
             ty: "vertex",
             src: "
             #version 460
             layout(location = 0) in vec3 position;
+            layout(location = 1) in vec2 tex_coord;
             layout(push_constant) uniform FrameData {
                 float time;
                 mat4 mvp;
             } frame_data;
-            layout(location = 0) out vec3 colour;
+            layout(location = 0) out vec2 uv;
             void main() {
-                colour = position * 0.5 + 0.5;
+                uv = tex_coord;
                 gl_Position = frame_data.mvp * vec4(position, 1.0);
             }
             ",
@@ -187,11 +194,12 @@ fn main() {
             src: "
             #version 460
 
-            layout(location = 0) in vec3 colour;
+            layout(location = 0) in vec2 uv;
+            layout(set = 0, binding = 0) uniform sampler2D tex;
             layout(location = 0) out vec4 frag_colour;
 
             void main() {
-                frag_colour = vec4(colour, 1.0);
+                frag_colour = vec4(texture(tex, uv).rgb, 1.0);
             }
             "
         }
@@ -219,42 +227,48 @@ fn main() {
 
     // Cube vertex data
     const VERTICES: [window::Vertex; 36] = [
-        window::Vertex::new([-1.0, -1.0, -1.0]),
-        window::Vertex::new([-1.0, -1.0, 1.0]),
-        window::Vertex::new([-1.0, 1.0, 1.0]),
-        window::Vertex::new([1.0, 1.0, -1.0]),
-        window::Vertex::new([-1.0, -1.0, -1.0]),
-        window::Vertex::new([-1.0, 1.0, -1.0]),
-        window::Vertex::new([1.0, -1.0, 1.0]),
-        window::Vertex::new([-1.0, -1.0, -1.0]),
-        window::Vertex::new([1.0, -1.0, -1.0]),
-        window::Vertex::new([1.0, 1.0, -1.0]),
-        window::Vertex::new([1.0, -1.0, -1.0]),
-        window::Vertex::new([-1.0, -1.0, -1.0]),
-        window::Vertex::new([-1.0, -1.0, -1.0]),
-        window::Vertex::new([-1.0, 1.0, 1.0]),
-        window::Vertex::new([-1.0, 1.0, -1.0]),
-        window::Vertex::new([1.0, -1.0, 1.0]),
-        window::Vertex::new([-1.0, -1.0, 1.0]),
-        window::Vertex::new([-1.0, -1.0, -1.0]),
-        window::Vertex::new([-1.0, 1.0, 1.0]),
-        window::Vertex::new([-1.0, -1.0, 1.0]),
-        window::Vertex::new([1.0, -1.0, 1.0]),
-        window::Vertex::new([1.0, 1.0, 1.0]),
-        window::Vertex::new([1.0, -1.0, -1.0]),
-        window::Vertex::new([1.0, 1.0, -1.0]),
-        window::Vertex::new([1.0, -1.0, -1.0]),
-        window::Vertex::new([1.0, 1.0, 1.0]),
-        window::Vertex::new([1.0, -1.0, 1.0]),
-        window::Vertex::new([1.0, 1.0, 1.0]),
-        window::Vertex::new([1.0, 1.0, -1.0]),
-        window::Vertex::new([-1.0, 1.0, -1.0]),
-        window::Vertex::new([1.0, 1.0, 1.0]),
-        window::Vertex::new([-1.0, 1.0, -1.0]),
-        window::Vertex::new([-1.0, 1.0, 1.0]),
-        window::Vertex::new([1.0, 1.0, 1.0]),
-        window::Vertex::new([-1.0, 1.0, 1.0]),
-        window::Vertex::new([1.0, -1.0, 1.0]),
+        // Top
+        window::Vertex::new([1.0, 1.0,-1.0], [1.0, 1.0]),
+        window::Vertex::new([-1.0,-1.0,-1.0], [0.0, 0.0]),
+        window::Vertex::new([-1.0, 1.0,-1.0], [0.0, 1.0]),
+        window::Vertex::new([1.0, 1.0,-1.0], [1.0, 1.0]),
+        window::Vertex::new([1.0,-1.0,-1.0], [1.0, 0.0]),
+        window::Vertex::new([-1.0,-1.0,-1.0], [0.0, 0.0]),
+        // Side
+        window::Vertex::new([-1.0,-1.0,-1.0], [1.0, 1.0]),
+        window::Vertex::new([-1.0,-1.0, 1.0], [1.0, 0.0]),
+        window::Vertex::new([-1.0, 1.0, 1.0], [0.0, 0.0]),
+        window::Vertex::new([-1.0,-1.0,-1.0], [1.0, 1.0]),
+        window::Vertex::new([-1.0, 1.0, 1.0], [0.0, 0.0]),
+        window::Vertex::new([-1.0, 1.0,-1.0], [0.0, 1.0]),
+        // Side
+        window::Vertex::new([1.0,-1.0, 1.0], [1.0, 0.0]),
+        window::Vertex::new([-1.0,-1.0,-1.0], [0.0, 1.0]),
+        window::Vertex::new([1.0,-1.0,-1.0], [1.0, 1.0]),
+        window::Vertex::new([1.0,-1.0, 1.0], [1.0, 0.0]),
+        window::Vertex::new([-1.0,-1.0, 1.0], [0.0, 0.0]),
+        window::Vertex::new([-1.0,-1.0,-1.0], [0.0, 1.0]),
+        // Side
+        window::Vertex::new([1.0, 1.0, 1.0], [1.0, 0.0]),
+        window::Vertex::new([1.0,-1.0,-1.0], [0.0, 1.0]),
+        window::Vertex::new([1.0, 1.0,-1.0], [1.0, 1.0]),
+        window::Vertex::new([1.0,-1.0,-1.0], [0.0, 1.0]),
+        window::Vertex::new([1.0, 1.0, 1.0], [1.0, 0.0]),
+        window::Vertex::new([1.0,-1.0, 1.0], [0.0, 0.0]),
+        // Side
+        window::Vertex::new([1.0, 1.0, 1.0], [0.0, 0.0]),
+        window::Vertex::new([1.0, 1.0,-1.0], [0.0, 1.0]),
+        window::Vertex::new([-1.0, 1.0,-1.0], [1.0, 1.0]),
+        window::Vertex::new([1.0, 1.0, 1.0], [0.0, 0.0]),
+        window::Vertex::new([-1.0, 1.0,-1.0], [1.0, 1.0]),
+        window::Vertex::new([-1.0, 1.0, 1.0], [1.0, 0.0]),
+        // Bottom
+        window::Vertex::new([-1.0, 1.0, 1.0], [0.0, 0.0]),
+        window::Vertex::new([-1.0,-1.0, 1.0], [1.0, 0.0]),
+        window::Vertex::new([1.0,-1.0, 1.0], [1.0, 1.0]),
+        window::Vertex::new([1.0, 1.0, 1.0], [0.0, 0.0]),
+        window::Vertex::new([-1.0, 1.0, 1.0], [0.0, 1.0]),
+        window::Vertex::new([1.0,-1.0, 1.0], [1.0, 1.0]),
     ];
 
     let vertex_buffer = CpuAccessibleBuffer::from_data(
@@ -309,6 +323,28 @@ fn main() {
 
     let command_buffer_allocator =
         StandardCommandBufferAllocator::new(device.clone(), Default::default());
+    let descriptor_set_allocator = StandardDescriptorSetAllocator::new(device.clone());
+
+    let layout = pipeline.layout().set_layouts().get(0).unwrap();
+    let sampler = Sampler::new(
+        device.clone(),
+        SamplerCreateInfo {
+            mag_filter: Filter::Linear,
+            min_filter: Filter::Linear,
+            address_mode: [SamplerAddressMode::Repeat; 3],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let sync_image_set = PersistentDescriptorSet::new(
+        &descriptor_set_allocator,
+        layout.clone(),
+        [WriteDescriptorSet::image_view_sampler(
+            0, image_view, sampler,
+        )],
+    )
+    .unwrap();
 
     event_loop.run(move |event, _, control_flow| {
         let window = surface.object().unwrap().downcast_ref::<Window>().unwrap();
@@ -326,6 +362,37 @@ fn main() {
                 if dimensions.width == 0 || dimensions.height == 0 {
                     return;
                 }
+
+                queue
+                    .with(|mut q| unsafe {
+                        q.submit_unchecked(
+                            [SubmitInfo {
+                                signal_semaphores: vec![SemaphoreSubmitInfo::semaphore(
+                                    acquire_sem.clone(),
+                                )],
+                                ..Default::default()
+                            }],
+                            None,
+                        )
+                    })
+                    .unwrap();
+
+                // barrier.wait();
+                // barrier_2.wait();
+
+                queue
+                    .with(|mut q| unsafe {
+                        q.submit_unchecked(
+                            [SubmitInfo {
+                                wait_semaphores: vec![SemaphoreSubmitInfo::semaphore(
+                                    release_sem.clone(),
+                                )],
+                                ..Default::default()
+                            }],
+                            None,
+                        )
+                    })
+                    .unwrap();
 
                 previous_frame_end.as_mut().unwrap().cleanup_finished();
 
@@ -405,6 +472,12 @@ fn main() {
                     .bind_pipeline_graphics(pipeline.clone())
                     .bind_vertex_buffers(0, vertex_buffer.clone())
                     .push_constants(pipeline.layout().clone(), 0, push_constants)
+                    .bind_descriptor_sets(
+                        PipelineBindPoint::Graphics,
+                        pipeline.layout().clone(),
+                        0,
+                        sync_image_set.clone(),
+                    )
                     .draw(VERTICES.len().try_into().unwrap(), 1, 0, 0)
                     .unwrap()
                     .end_render_pass()

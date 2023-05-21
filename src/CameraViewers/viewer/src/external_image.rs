@@ -2,11 +2,11 @@ use std::{mem::MaybeUninit, sync::Arc};
 
 use ash::vk::MemoryGetWin32HandleInfoKHR;
 use vulkano::{
-    device::DeviceOwned,
+    device::{DeviceOwned, Device},
     format::Format,
     image::{
         sys::{Image, ImageCreateInfo, ImageMemory, RawImage},
-        ImageCreateFlags, ImageDimensions, ImageError, ImageFormatInfo, ImageUsage,
+        ImageCreateFlags, ImageDimensions, ImageError, ImageFormatInfo, ImageUsage, ImageAccess, ImageInner, ImageLayout, ImageDescriptorLayouts,
     },
     memory::{
         allocator::{AllocationCreationError, MemoryAllocator, MemoryUsage},
@@ -259,5 +259,46 @@ impl ExternalImage {
 
     pub fn format(&self) -> Format {
         self.inner.format().unwrap()
+    }
+}
+
+// Gracefully copied from vulkano::StorageImage
+unsafe impl DeviceOwned for ExternalImage {
+    #[inline]
+    fn device(&self) -> &Arc<Device> {
+        self.inner.device()
+    }
+}
+
+unsafe impl ImageAccess for ExternalImage {
+    #[inline]
+    fn inner(&self) -> ImageInner<'_> {
+        ImageInner {
+            image: &self.inner,
+            first_layer: 0,
+            num_layers: self.inner.dimensions().array_layers(),
+            first_mipmap_level: 0,
+            num_mipmap_levels: 1,
+        }
+    }
+
+    #[inline]
+    fn initial_layout_requirement(&self) -> ImageLayout {
+        ImageLayout::General
+    }
+
+    #[inline]
+    fn final_layout_requirement(&self) -> ImageLayout {
+        ImageLayout::General
+    }
+
+    #[inline]
+    fn descriptor_layouts(&self) -> Option<ImageDescriptorLayouts> {
+        Some(ImageDescriptorLayouts {
+            storage_image: ImageLayout::General,
+            combined_image_sampler: ImageLayout::General,
+            sampled_image: ImageLayout::General,
+            input_attachment: ImageLayout::General,
+        })
     }
 }
