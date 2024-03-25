@@ -3,10 +3,6 @@ cmake_minimum_required(VERSION 3.16.0)
 set(LIB_DIR ${CMAKE_SOURCE_DIR}/../../../lib)
 
 option(BUILD_TEST "Build test application" ON)
-if (${BUILD_TEST})
-  set(CMAKE_TOOLCHAIN_FILE ${LIB_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake CACHE STRING "Vcpkg toolchain file")
-endif()
-
 
 project(unity-plugin)
 

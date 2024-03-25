@@ -1,0 +1,17 @@
+{
+    "version": 6,
+    "configurePresets": [
+      {
+        "name": "test-app",
+        "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "binaryDir": "${sourceDir}/obj"
+      }
+    ],
+    "buildPresets": [
+      {
+        "name": "debug test-app",
+        "configurePreset": "test-app",
+        "configuration": "Debug"
+      }
+    ]
+  }
