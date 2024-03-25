@@ -1,0 +1,4 @@
+#include <string_view>
+
+static constexpr std::string_view vs_shader_source = R"SHADER(@TEST_VS_SHADER@)SHADER";
+static constexpr std::string_view fs_shader_source = R"SHADER(@TEST_FS_SHADER@)SHADER";

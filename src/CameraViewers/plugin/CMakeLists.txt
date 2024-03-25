@@ -20,11 +20,24 @@ target_include_directories(unity-plugin PRIVATE ${LIB_DIR}/UnityPluginAPI)
 
 if(${BUILD_TEST})
   add_executable(test)
+  
   if (WIN32)
     target_compile_definitions(test PRIVATE _WIN32)
     target_compile_options(test PRIVATE /diagnostics:caret)
   endif()
   target_compile_definitions(test PRIVATE ROOT_DIR="${CMAKE_SOURCE_DIR}")
+
+  # GLAD OpenGL loader
+  target_include_directories(test PRIVATE ${LIB_DIR}/glad/include)
+  target_sources(test PRIVATE ${LIB_DIR}/glad/src/glad.c)
+
+  # GLFW
+  find_package(glfw3 CONFIG REQUIRED)
+  target_link_libraries(test PRIVATE glfw)
+
+  # GLM
+  find_package(glm CONFIG REQUIRED)
+  target_link_libraries(test PRIVATE glm::glm)
 endif()
 
 # Source files
