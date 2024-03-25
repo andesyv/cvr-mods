@@ -48,12 +48,15 @@ pub const INSTANCE_EXTENSIONS: InstanceExtensions = InstanceExtensions {
 #[derive(Clone, Copy, Debug, Default, Zeroable, Pod)]
 pub struct Vertex {
     position: [f32; 3],
-    tex_coord: [f32; 2]
+    tex_coord: [f32; 2],
 }
 
 impl Vertex {
     pub const fn new(position: [f32; 3], tex_coord: [f32; 2]) -> Self {
-        Vertex { position, tex_coord }
+        Vertex {
+            position,
+            tex_coord,
+        }
     }
 }
 
@@ -61,25 +64,36 @@ impl_vertex!(Vertex, position, tex_coord);
 
 pub fn create_instance() -> Arc<Instance> {
     let library = VulkanLibrary::new().unwrap();
-    Instance::new(
-        library.clone(),
-        InstanceCreateInfo {
-            application_name: Some("Viewer".to_string()),
-            application_version: Version {
-                major: 1,
-                minor: 0,
-                patch: 0,
+    const POSSIBLE_DEBUG_LAYERS: [Option<&str>; 3] = [
+        Some("VK_LAYER_LUNARG_standard_validation"), // The best one
+        Some("VK_LAYER_KHRONOS_validation"),         // Likely more available
+        None,
+    ];
+    for debug_layer in POSSIBLE_DEBUG_LAYERS {
+        if let Ok(instance) = Instance::new(
+            library.clone(),
+            InstanceCreateInfo {
+                application_name: Some("Viewer".to_string()),
+                application_version: Version {
+                    major: 1,
+                    minor: 0,
+                    patch: 0,
+                },
+                enabled_extensions: INSTANCE_EXTENSIONS.union(&required_extensions(&library)),
+                enabled_layers: debug_layer
+                    .and_then(|layer| Some(vec![layer.to_string()]))
+                    .unwrap_or(vec![]),
+                enumerate_portability: true, // Allow non-conformant vulkan devices (e.g. MoltenVK)
+                ..Default::default()
             },
-            enabled_extensions: INSTANCE_EXTENSIONS.union(&required_extensions(&library)),
-            enabled_layers: vec![
-                // "VK_LAYER_LUNARG_standard_validation".to_string(), // The best one
-                "VK_LAYER_KHRONOS_validation".to_string(), // Likely more available
-            ],
-            enumerate_portability: true, // Allow non-conformant vulkan devices (e.g. MoltenVK)
-            ..Default::default()
-        },
-    )
-    .unwrap()
+        ) {
+            if let Some(layer) = debug_layer {
+                println!("Using validation layer: {}", layer);
+            }
+            return instance;
+        }
+    }
+    panic!("Could not create Vulkan instance");
 }
 
 #[cfg(debug_assertions)]

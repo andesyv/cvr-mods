@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <ranges>
 #include <regex>
+#include <thread>
 
 #include <glad/glad.h>
 #define GLFW_INCLUDE_NONE
@@ -76,7 +77,7 @@ std::pair<std::shared_ptr<HANDLE>, std::shared_ptr<HANDLE>> create_pipe() {
   return std::make_pair(std::move(child_out_read), std::move(child_out_write));
 }
 
-std::optional<PROCESS_INFORMATION> create_child_process(std::string cmd, std::shared_ptr<HANDLE> std_out) {
+std::optional<PROCESS_INFORMATION> create_child_process(std::string_view cmd, std::shared_ptr<HANDLE> std_out) {
   PROCESS_INFORMATION p_info;
   STARTUPINFO s_info;
  
@@ -88,9 +89,11 @@ std::optional<PROCESS_INFORMATION> create_child_process(std::string cmd, std::sh
   s_info.hStdOutput = *std_out;
   //  s_info.hStdInput = g_hChildStd_IN_Rd;
   s_info.dwFlags |= STARTF_USESTDHANDLES;
+
+  std::string mutableCmd{ cmd };
  
   if (!CreateProcess(NULL, 
-    cmd.data(),
+    mutableCmd.data(),
     NULL,     // process security attributes 
     NULL,     // primary thread security attributes 
     TRUE,     // handles are inherited 
@@ -136,13 +139,14 @@ std::vector<ConnectionData> fetch_connection_data_from_child_pipe_output(std::st
     }) | std::ranges::to<std::vector<std::string>>();
 
 #ifdef _WIN32
-    static_assert(4 <= sizeof(std::size_t) && 4 <= sizeof(long long) && 4 <= sizeof(HANDLE), "Program requries 64 bit pointer types");
+    static_assert(8 == sizeof(HANDLE), "Program requires 64 bit pointer types");
+    static_assert(8 == sizeof(unsigned long long));
 
-    const auto mem_address{ std::stoll(sub_matches.at(3), nullptr, 16) };
+    const auto mem_address{ std::stoull(sub_matches.at(2), nullptr, 16) };
     if (mem_address <= 0)
       continue;
 
-    HANDLE handle{ reinterpret_cast<void*>(static_cast<std::size_t>(mem_address)) };
+    HANDLE handle{ reinterpret_cast<void*>(mem_address) };
 
     if (!GetHandleInformation(handle, 0)) {
       LPTSTR error_msg{ nullptr };
@@ -165,8 +169,8 @@ std::vector<ConnectionData> fetch_connection_data_from_child_pipe_output(std::st
       .identifier = sub_matches.at(1),
       .handle = handle,
       .handle_type = sub_matches.at(2),
-      .memory_allocation_size = 4 < sub_matches.size() ? std::make_optional<std::size_t>(std::stoll(sub_matches.at(4))) : std::nullopt,
-      .memory_image_format = 5 < sub_matches.size() ? std::make_optional(sub_matches.at(5)) : std::nullopt,
+      .memory_allocation_size = 3 < sub_matches.size() ? std::make_optional<std::size_t>(std::stoll(sub_matches.at(3))) : std::nullopt,
+      .memory_image_format = 4 < sub_matches.size() ? std::make_optional(sub_matches.at(4)) : std::nullopt,
     });
 #endif
   }
@@ -272,16 +276,19 @@ int main()
     std::cout << "Failed to initialize GLAD" << std::endl;
     return -1;
   }
-  else if (glGenSemaphoresEXT == nullptr || glCreateMemoryObjectsEXT == nullptr)
+
+  const auto getGLString = [](GLenum type) {
+    return std::string_view{ reinterpret_cast<const char*>(glGetString(GL_RENDERER)) };
+  };
+  
+  std::cout << std::format("Running OpenGL version {}, on a {}", getGLString(GL_VERSION), getGLString(GL_RENDERER)) << std::endl;
+
+  if (glGenSemaphoresEXT == nullptr || glCreateMemoryObjectsEXT == nullptr)
 	{
-		std::cout << "Extension GL_EXT_memory_object or GL_EXT_semaphore is not missing." << std::endl;
+		std::cout << "Extension GL_EXT_memory_object or GL_EXT_semaphore is missing." << std::endl;
+    glfwTerminate();
     return -1;
 	}
-
-  int versionMajor, versionMinor;
-  glGetIntegerv(GL_MAJOR_VERSION, &versionMajor);
-  glGetIntegerv(GL_MINOR_VERSION, &versionMinor);
-  std::cout << std::format("Running OpenGL version: {}.{}", versionMajor, versionMinor) << std::endl;
 
   glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
   glDebugMessageCallback([](GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar *message, const void *userParam)
@@ -327,7 +334,6 @@ int main()
     if (!child_std_read)
       return -1;
 
-    constexpr static auto VIEWER_PATH = ROOT_DIR "\\..\\viewer\\target\\debug\\viewer.exe";
     if (!std::filesystem::exists(std::filesystem::path{VIEWER_PATH}))
     {
       std::cout << "Could not find viewer executable!" << std::endl;
@@ -342,12 +348,20 @@ int main()
 #endif
 
     std::vector<ConnectionData> connection_data{};
-    while (connection_data.empty()) {
+    for (unsigned int attempts { 0u }; attempts < 10u && connection_data.empty(); ++attempts) {
 #ifdef _WIN32
       std::string child_pipe_output{ extract_from_child_pipe(*child_std_read) };
 #endif
       print_child_pipe(child_pipe_output);
       connection_data = fetch_connection_data_from_child_pipe_output(child_pipe_output);
+      if (!connection_data.empty())
+        break;
+
+      std::this_thread::sleep_for(std::chrono::seconds{1u});
+    }
+    if (connection_data.empty()) {
+      std::cout << "Failed to fetch connection data after 10 attempts" << std::endl;
+      return -1;
     }
 
     std::cout << "Found connection data: " << std::endl;

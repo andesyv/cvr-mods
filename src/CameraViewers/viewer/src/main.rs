@@ -45,8 +45,7 @@ use winit::{
 use crate::{
     external_image::ExternalImage,
     platform::{
-        get_external_memory_type, get_external_semaphore_type, print_memory_handle,
-        print_semaphore_handle,
+        export_memory_to_owner_process, export_semaphore_to_owner_process, get_external_memory_type, get_external_semaphore_type
     },
     window::find_physical_device,
 };
@@ -113,8 +112,8 @@ fn main() {
 
     let memory_allocator = StandardMemoryAllocator::new_default(device.clone());
 
-    // Logic taken from https://github.com/vulkano-rs/vulkano/blob/master/examples/src/bin/gl-interop.rs
-    // (which is based on https://github.com/KhronosGroup/Vulkan-Samples/blob/master/samples/extensions/open_gl_interop/open_gl_interop.cpp)
+    // Logic taken from https://github.com/vulkano-rs/vulkano/blob/master/examples/gl-interop/main.rs
+    // (which is based on https://github.com/KhronosGroup/Vulkan-Samples/blob/main/samples/extensions/open_gl_interop/open_gl_interop.cpp)
 
     let semaphore_handle_type = get_external_semaphore_type(&physical_device).unwrap();
     let memory_handle_type = get_external_memory_type(
@@ -133,8 +132,8 @@ fn main() {
     let release_sem =
         create_external_semaphore(device.clone(), semaphore_handle_type.into()).unwrap();
 
-    print_semaphore_handle("OGL_begin", &release_sem, semaphore_handle_type);
-    print_semaphore_handle("OGL_end", &acquire_sem, semaphore_handle_type);
+    export_semaphore_to_owner_process("OGL_begin", &release_sem, semaphore_handle_type);
+    export_semaphore_to_owner_process("OGL_end", &acquire_sem, semaphore_handle_type);
 
     // TODO: Make a version that works on Windows (POSIX file descriptor handles only works on Unix)
     let image = ExternalImage::new(
@@ -160,7 +159,7 @@ fn main() {
     )
     .unwrap();
 
-    print_memory_handle("OGL_buffer", &image, memory_handle_type);
+    export_memory_to_owner_process("OGL_buffer", &image, memory_handle_type);
 
     let image_view = ImageView::new_default(image.clone()).unwrap();
 
