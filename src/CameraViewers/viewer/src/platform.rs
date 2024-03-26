@@ -103,7 +103,7 @@ fn format_handle(raw_ptr: *const c_void) -> String {
 #[cfg(windows)]
 fn print_semaphore_handle(identifier: &str, handle: &HANDLE) {
     println!(
-        "Connection data: {{\"semaphore\", \"{}\", \"{}\"}}",
+        "Connection data: {{\"semaphore\", \"{}\", handle type: \"OpaqueWin32\", \"{}\"}}",
         identifier,
         format_handle(handle.0 as std::os::windows::raw::HANDLE)
     );
@@ -116,7 +116,7 @@ fn print_memory_handle(
     image: &Arc<ExternalImage>,
 ) {
     println!(
-        "Connection data: {{\"image\", \"{}\", \"{}\", size: \"{}\", format: \"{:?}\" }}",
+        "Connection data: {{\"image\", \"{}\", handle type: \"OpaqueWin32\", \"{}\", size: \"{}\", format: \"{:?}\" }}",
         identifier,
         format_handle(handle.0 as std::os::windows::raw::HANDLE),
         image.as_ref().device_memory_allocation_size(),

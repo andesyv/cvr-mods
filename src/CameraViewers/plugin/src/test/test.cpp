@@ -142,13 +142,14 @@ std::vector<ConnectionData> fetch_connection_data_from_child_pipe_output(std::st
     static_assert(8 == sizeof(HANDLE), "Program requires 64 bit pointer types");
     static_assert(8 == sizeof(unsigned long long));
 
-    const auto mem_address{ std::stoull(sub_matches.at(2), nullptr, 16) };
+    const auto mem_address{ std::stoull(sub_matches.at(3), nullptr, 16) };
     if (mem_address <= 0)
       continue;
 
-    HANDLE handle{ reinterpret_cast<void*>(mem_address) };
+    HANDLE handle{ reinterpret_cast<HANDLE>(mem_address) };
 
-    if (!GetHandleInformation(handle, 0)) {
+    unsigned long handle_info{0u};
+    if (GetHandleInformation(handle, &handle_info) == 0) {
       LPTSTR error_msg{ nullptr };
       if (FormatMessage(
         FORMAT_MESSAGE_ALLOCATE_BUFFER | 
@@ -169,8 +170,8 @@ std::vector<ConnectionData> fetch_connection_data_from_child_pipe_output(std::st
       .identifier = sub_matches.at(1),
       .handle = handle,
       .handle_type = sub_matches.at(2),
-      .memory_allocation_size = 3 < sub_matches.size() ? std::make_optional<std::size_t>(std::stoll(sub_matches.at(3))) : std::nullopt,
-      .memory_image_format = 4 < sub_matches.size() ? std::make_optional(sub_matches.at(4)) : std::nullopt,
+      .memory_allocation_size = 4 < sub_matches.size() ? std::make_optional<std::size_t>(std::stoull(sub_matches.at(4))) : std::nullopt,
+      .memory_image_format = 5 < sub_matches.size() ? std::make_optional(sub_matches.at(5)) : std::nullopt,
     });
 #endif
   }
@@ -197,17 +198,19 @@ std::pair<Semaphore, Semaphore> create_semaphores_from_connection_data(const std
     GLuint id;
     glGenSemaphoresEXT(1, &id);
 #ifdef _WIN32
-    if (data.handle_type != "OpaqueWin32Kmt")
+    if (data.handle_type != "OpaqueWin32")
       throw std::logic_error{"Handle type is not implemented"};
-    glImportSemaphoreWin32HandleEXT(id, GL_HANDLE_TYPE_OPAQUE_WIN32_KMT_EXT, data.handle);
+    glImportSemaphoreWin32HandleEXT(id, GL_HANDLE_TYPE_OPAQUE_WIN32_EXT, data.handle);
 #endif
     semaphore = {id};
+    if (!glIsSemaphoreEXT(semaphore.getId()))
+      throw std::runtime_error{"Semaphore object is invalid!"};
   }
 
   return { std::move(begin), std::move(end) };
 }
 
-std::optional<ExternalTexture> create_texture_from_connection_data(const std::vector<ConnectionData>& connection_data) {
+std::unique_ptr<ExternalTexture> create_texture_from_connection_data(const std::vector<ConnectionData>& connection_data) {
   for (const auto& data : connection_data) {
     if (data.type != ConnectionData::Type::Image)
       continue;
@@ -217,9 +220,9 @@ std::optional<ExternalTexture> create_texture_from_connection_data(const std::ve
     if (!data.memory_allocation_size)
       throw std::logic_error{"Memory connection data requires a memory allocation size"};
 #ifdef _WIN32
-    if (data.handle_type != "OpaqueWin32Kmt")
+    if (data.handle_type != "OpaqueWin32")
       throw std::logic_error{"Handle type is not implemented"};
-    glImportMemoryWin32HandleEXT(memory_id, *data.memory_allocation_size, GL_HANDLE_TYPE_OPAQUE_WIN32_KMT_EXT, data.handle);
+    glImportMemoryWin32HandleEXT(memory_id, *data.memory_allocation_size, GL_HANDLE_TYPE_OPAQUE_WIN32_EXT, data.handle);
 #endif
 
     glGenTextures(1, &texture_id);
@@ -233,10 +236,13 @@ std::optional<ExternalTexture> create_texture_from_connection_data(const std::ve
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glBindTexture(GL_TEXTURE_2D, 0);
 
-    return ExternalTexture{ texture_id, memory_id };
+    if (!glIsMemoryObjectEXT(texture_id))
+      throw std::runtime_error{"Failed to create external memory object!"};
+
+    return std::make_unique<ExternalTexture>(texture_id, memory_id);
   }
 
-  return std::nullopt;
+  return {};
 }
 
 int main()
@@ -322,7 +328,7 @@ int main()
     const std::string_view msg_str{message, static_cast<std::size_t>(length)};
     const auto msg = std::format("OpenGL: {{ source: {}, type: {}, severity: {}, message: {} }}", sources.at(source), types.at(type), severities.at(severity), msg_str);
     std::cout << msg << std::endl;
-    if (severity <= GL_DEBUG_SEVERITY_MEDIUM)
+    if (severity != GL_DEBUG_SEVERITY_NOTIFICATION && severity != GL_DEBUG_SEVERITY_LOW)
       throw std::runtime_error{msg};
   }, nullptr);
 

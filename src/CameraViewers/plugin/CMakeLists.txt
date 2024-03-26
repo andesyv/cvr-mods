@@ -25,7 +25,6 @@ if(${BUILD_TEST})
     target_compile_definitions(test PRIVATE _WIN32)
     target_compile_options(test PRIVATE /diagnostics:caret)
   endif()
-  target_compile_definitions(test PRIVATE ROOT_DIR="${CMAKE_SOURCE_DIR}")
 
   # GLAD OpenGL loader
   target_include_directories(test PRIVATE ${LIB_DIR}/glad/include)

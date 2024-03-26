@@ -1,3 +1,5 @@
+#include <optional>
+
 #include <glad/glad.h>
 
 constexpr std::size_t WIDTH = 800;
@@ -25,17 +27,16 @@ struct ExternalTexture {
   GLuint id;
   GLuint memory_id;
 
-  ExternalTexture(GLuint _id, GLuint _memory_id)
-    : id{_id}, memory_id{_memory_id} {}
-
   ~ExternalTexture() {
     glDeleteTextures(1, &id);
   }
 };
 
-struct Semaphore {
+class Semaphore {
+private:
   std::optional<GLuint> id{};
 
+public:
   Semaphore(std::optional<GLuint> _id = {}) : id{_id} {}
   Semaphore(const Semaphore&) = delete;
   Semaphore(Semaphore&& rhs) {
@@ -49,13 +50,19 @@ struct Semaphore {
   }
 
   void wait(const ExternalTexture& texture) {
-    GLenum src_layout = GL_LAYOUT_COLOR_ATTACHMENT_EXT;
+    // GLenum src_layout = GL_LAYOUT_COLOR_ATTACHMENT_EXT;
+    GLenum src_layout = GL_LAYOUT_GENERAL_EXT;
     glWaitSemaphoreEXT(*id, 0, nullptr, 1, &texture.id, &src_layout);
   }
 
   void signal(const ExternalTexture& texture) {
-    GLenum dst_layout = GL_LAYOUT_SHADER_READ_ONLY_EXT;
+    // GLenum dst_layout = GL_LAYOUT_SHADER_READ_ONLY_EXT;
+    GLenum dst_layout = GL_LAYOUT_GENERAL_EXT;
     glSignalSemaphoreEXT(*id, 0, nullptr, 1, &texture.id, &dst_layout);
+  }
+
+  GLuint getId() const {
+    return *id;
   }
 
   ~Semaphore() {
@@ -144,7 +151,7 @@ std::unique_ptr<Shader> create_shader() {
   return std::make_unique<Shader>(shader_id);
 }
 
-VAO create_plane() {
+std::unique_ptr<VAO> create_plane() {
   static constexpr std::array plane_vertices{
     1.f, 1.f,   // top right
     -1.f, 1.f,   // top left
@@ -166,5 +173,5 @@ VAO create_plane() {
   glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), nullptr);
   glEnableVertexAttribArray(0);
   
-  return { .id = plane_vao, .vbo = plane_vbo };
+  return std::make_unique<VAO>(plane_vao, plane_vbo);
 }

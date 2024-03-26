@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Instant};
+use std::{sync::{Arc, Barrier}, time::Instant};
 
 use cgmath::{Matrix4, Point3, SquareMatrix, Vector3};
 // use platform::get_allowed_external_semaphore_handle_types;
@@ -375,9 +375,6 @@ fn main() {
                         )
                     })
                     .unwrap();
-
-                // barrier.wait();
-                // barrier_2.wait();
 
                 queue
                     .with(|mut q| unsafe {
