@@ -392,6 +392,9 @@ int main()
     glEnable(GL_CULL_FACE);
     glDisable(GL_DEPTH_TEST);
 
+    end_semaphore.signal(*shared_texture);
+    glFlush();
+
     auto last_tp{ std::chrono::steady_clock::now() };
     std::cout << std::format("Took {}ms to initialize", std::chrono::duration_cast<std::chrono::microseconds>(last_tp - program_start).count() * 0.001) << std::endl;
 
@@ -412,6 +415,7 @@ int main()
 
       // Wait for rendering to be ready
       begin_semaphore.wait(*shared_texture);
+      // glFlush();
 
       shared_texture_framebuffer.bind();
       glClearColor(0.2f, 0.3f, t, 1.0f);

@@ -1,4 +1,4 @@
-use std::{sync::{Arc, Barrier}, time::Instant};
+use std::{sync::Arc, time::Instant};
 
 use cgmath::{Matrix4, Point3, SquareMatrix, Vector3};
 // use platform::get_allowed_external_semaphore_handle_types;
@@ -45,7 +45,8 @@ use winit::{
 use crate::{
     external_image::ExternalImage,
     platform::{
-        export_memory_to_owner_process, export_semaphore_to_owner_process, get_external_memory_type, get_external_semaphore_type
+        export_memory_to_owner_process, export_semaphore_to_owner_process,
+        get_external_memory_type, get_external_semaphore_type,
     },
     window::find_physical_device,
 };
@@ -127,13 +128,13 @@ fn main() {
     )
     .unwrap();
 
-    let acquire_sem =
+    let vk_begin_sem =
         create_external_semaphore(device.clone(), semaphore_handle_type.into()).unwrap();
-    let release_sem =
+    let vk_end_sem =
         create_external_semaphore(device.clone(), semaphore_handle_type.into()).unwrap();
 
-    export_semaphore_to_owner_process("OGL_begin", &release_sem, semaphore_handle_type);
-    export_semaphore_to_owner_process("OGL_end", &acquire_sem, semaphore_handle_type);
+    export_semaphore_to_owner_process("OGL_begin", &vk_end_sem, semaphore_handle_type);
+    export_semaphore_to_owner_process("OGL_end", &vk_begin_sem, semaphore_handle_type);
 
     // TODO: Make a version that works on Windows (POSIX file descriptor handles only works on Unix)
     let image = ExternalImage::new(
@@ -227,47 +228,47 @@ fn main() {
     // Cube vertex data
     const VERTICES: [window::Vertex; 36] = [
         // Top
-        window::Vertex::new([1.0, 1.0,-1.0], [1.0, 1.0]),
-        window::Vertex::new([-1.0,-1.0,-1.0], [0.0, 0.0]),
-        window::Vertex::new([-1.0, 1.0,-1.0], [0.0, 1.0]),
-        window::Vertex::new([1.0, 1.0,-1.0], [1.0, 1.0]),
-        window::Vertex::new([1.0,-1.0,-1.0], [1.0, 0.0]),
-        window::Vertex::new([-1.0,-1.0,-1.0], [0.0, 0.0]),
+        window::Vertex::new([1.0, 1.0, -1.0], [1.0, 1.0]),
+        window::Vertex::new([-1.0, -1.0, -1.0], [0.0, 0.0]),
+        window::Vertex::new([-1.0, 1.0, -1.0], [0.0, 1.0]),
+        window::Vertex::new([1.0, 1.0, -1.0], [1.0, 1.0]),
+        window::Vertex::new([1.0, -1.0, -1.0], [1.0, 0.0]),
+        window::Vertex::new([-1.0, -1.0, -1.0], [0.0, 0.0]),
         // Side
-        window::Vertex::new([-1.0,-1.0,-1.0], [1.0, 1.0]),
-        window::Vertex::new([-1.0,-1.0, 1.0], [1.0, 0.0]),
+        window::Vertex::new([-1.0, -1.0, -1.0], [1.0, 1.0]),
+        window::Vertex::new([-1.0, -1.0, 1.0], [1.0, 0.0]),
         window::Vertex::new([-1.0, 1.0, 1.0], [0.0, 0.0]),
-        window::Vertex::new([-1.0,-1.0,-1.0], [1.0, 1.0]),
+        window::Vertex::new([-1.0, -1.0, -1.0], [1.0, 1.0]),
         window::Vertex::new([-1.0, 1.0, 1.0], [0.0, 0.0]),
-        window::Vertex::new([-1.0, 1.0,-1.0], [0.0, 1.0]),
+        window::Vertex::new([-1.0, 1.0, -1.0], [0.0, 1.0]),
         // Side
-        window::Vertex::new([1.0,-1.0, 1.0], [1.0, 0.0]),
-        window::Vertex::new([-1.0,-1.0,-1.0], [0.0, 1.0]),
-        window::Vertex::new([1.0,-1.0,-1.0], [1.0, 1.0]),
-        window::Vertex::new([1.0,-1.0, 1.0], [1.0, 0.0]),
-        window::Vertex::new([-1.0,-1.0, 1.0], [0.0, 0.0]),
-        window::Vertex::new([-1.0,-1.0,-1.0], [0.0, 1.0]),
+        window::Vertex::new([1.0, -1.0, 1.0], [1.0, 0.0]),
+        window::Vertex::new([-1.0, -1.0, -1.0], [0.0, 1.0]),
+        window::Vertex::new([1.0, -1.0, -1.0], [1.0, 1.0]),
+        window::Vertex::new([1.0, -1.0, 1.0], [1.0, 0.0]),
+        window::Vertex::new([-1.0, -1.0, 1.0], [0.0, 0.0]),
+        window::Vertex::new([-1.0, -1.0, -1.0], [0.0, 1.0]),
         // Side
         window::Vertex::new([1.0, 1.0, 1.0], [1.0, 0.0]),
-        window::Vertex::new([1.0,-1.0,-1.0], [0.0, 1.0]),
-        window::Vertex::new([1.0, 1.0,-1.0], [1.0, 1.0]),
-        window::Vertex::new([1.0,-1.0,-1.0], [0.0, 1.0]),
+        window::Vertex::new([1.0, -1.0, -1.0], [0.0, 1.0]),
+        window::Vertex::new([1.0, 1.0, -1.0], [1.0, 1.0]),
+        window::Vertex::new([1.0, -1.0, -1.0], [0.0, 1.0]),
         window::Vertex::new([1.0, 1.0, 1.0], [1.0, 0.0]),
-        window::Vertex::new([1.0,-1.0, 1.0], [0.0, 0.0]),
+        window::Vertex::new([1.0, -1.0, 1.0], [0.0, 0.0]),
         // Side
         window::Vertex::new([1.0, 1.0, 1.0], [0.0, 0.0]),
-        window::Vertex::new([1.0, 1.0,-1.0], [0.0, 1.0]),
-        window::Vertex::new([-1.0, 1.0,-1.0], [1.0, 1.0]),
+        window::Vertex::new([1.0, 1.0, -1.0], [0.0, 1.0]),
+        window::Vertex::new([-1.0, 1.0, -1.0], [1.0, 1.0]),
         window::Vertex::new([1.0, 1.0, 1.0], [0.0, 0.0]),
-        window::Vertex::new([-1.0, 1.0,-1.0], [1.0, 1.0]),
+        window::Vertex::new([-1.0, 1.0, -1.0], [1.0, 1.0]),
         window::Vertex::new([-1.0, 1.0, 1.0], [1.0, 0.0]),
         // Bottom
         window::Vertex::new([-1.0, 1.0, 1.0], [0.0, 0.0]),
-        window::Vertex::new([-1.0,-1.0, 1.0], [1.0, 0.0]),
-        window::Vertex::new([1.0,-1.0, 1.0], [1.0, 1.0]),
+        window::Vertex::new([-1.0, -1.0, 1.0], [1.0, 0.0]),
+        window::Vertex::new([1.0, -1.0, 1.0], [1.0, 1.0]),
         window::Vertex::new([1.0, 1.0, 1.0], [0.0, 0.0]),
         window::Vertex::new([-1.0, 1.0, 1.0], [0.0, 1.0]),
-        window::Vertex::new([1.0,-1.0, 1.0], [1.0, 1.0]),
+        window::Vertex::new([1.0, -1.0, 1.0], [1.0, 1.0]),
     ];
 
     let vertex_buffer = CpuAccessibleBuffer::from_data(
@@ -367,7 +368,7 @@ fn main() {
                         q.submit_unchecked(
                             [SubmitInfo {
                                 signal_semaphores: vec![SemaphoreSubmitInfo::semaphore(
-                                    acquire_sem.clone(),
+                                    vk_end_sem.clone(),
                                 )],
                                 ..Default::default()
                             }],
@@ -381,7 +382,7 @@ fn main() {
                         q.submit_unchecked(
                             [SubmitInfo {
                                 wait_semaphores: vec![SemaphoreSubmitInfo::semaphore(
-                                    release_sem.clone(),
+                                    vk_begin_sem.clone(),
                                 )],
                                 ..Default::default()
                             }],
