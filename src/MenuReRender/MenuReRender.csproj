@@ -1,15 +1,24 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <AssemblyName>com.andough.menurerender</AssemblyName>
-    <Product>MenuReRender</Product>
-    <Version>1.1.1</Version>
-    <Description>ChilloutVR mod that renders your menu on top of your screen</Description>
-    <RootNamespace>MenuReRender</RootNamespace>
+    <AssemblyName>com.Andough.MenuReRender</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>
+    <Reference Include="0Harmony">
+      <HintPath>$(CVRPath)\MelonLoader\net35\0Harmony.dll</HintPath>
+    </Reference>
+    <Reference Include="Cohtml.Runtime">
+      <HintPath>$(CVRPath)\ChilloutVR_Data\Managed\Cohtml.Runtime.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.AnimationModule">
+      <HintPath>$(CVRPath)\ChilloutVR_Data\Managed\UnityEngine.AnimationModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.AssetBundleModule">
+      <HintPath>$(CVRPath)\ChilloutVR_Data\Managed\UnityEngine.AssetBundleModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(CVRPath)\ChilloutVR_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
+    </Reference>
     <EmbeddedResource Include="..\..\res\Assets\Bundle\menurerender.bundle" />
-    <Compile Remove="..\..\res\**" />
-    <None Remove="..\..\res\**" />
   </ItemGroup>
 </Project>

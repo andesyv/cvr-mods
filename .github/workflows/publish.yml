@@ -9,6 +9,9 @@ on:
 
 jobs:
   build:
+    # Job is disabled for now as it would not work unless I can get the CSharp assemblies on NuGet
+    # (CVR bundle is not up to date)
+    if: false
     runs-on: ubuntu-latest
 
     steps:
