@@ -35,16 +35,6 @@ namespace MenuReRender
 
     public override void OnInitializeMelon()
     {
-      // Commandbuffers still seems to not work with VR :/
-      // With the update to Unity 2021, some CommandBuffer bugs might have been fixed.
-      // So the it may not work in VR due simply due to something I have done incorrectly.
-      // TODO: Try some different things here: https://forum.unity.com/threads/commandbuffer-blit-in-vr-xr.1204489/
-      if (MetaPort.Instance.isUsingVr)
-      {
-        MelonLogger.Msg("MenuReRender is disabled due to VR being enabled");
-        return;
-      }
-
       _instance = this;
       if (!Init())
         SceneManager.sceneLoaded += OnSceneWasLoaded;

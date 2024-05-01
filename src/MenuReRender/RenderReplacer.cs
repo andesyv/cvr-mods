@@ -56,11 +56,7 @@ namespace MenuReRender
 
       // Build command buffer
       var cb = new CommandBuffer();
-      // var shaderID = Shader.PropertyToID("_MenuOverlay");
-      // cb.GetTemporaryRT(shaderID, -1, -1, 16, FilterMode.Bilinear);
-      // cb.SetRenderTarget(shaderID);
-      // cb.ClearRenderTarget(true, true, Color.cyan, 0.0f);
-      cb.SetRenderTarget(BuiltinRenderTextureType.CameraTarget);
+      cb.SetRenderTarget(new RenderTargetIdentifier(BuiltinRenderTextureType.CameraTarget, 0, CubemapFace.Unknown, RenderTargetIdentifier.AllDepthSlices));
 
       foreach (var rend in _renderers)
       {
@@ -71,19 +67,17 @@ namespace MenuReRender
         rend.enabled = false;
       }
 
-      // cb.SetRenderTarget(BuiltinRenderTextureType.CameraTarget);
-      // cb.Blit(shaderID, BuiltinRenderTextureType.CameraTarget);
-      // cb.ReleaseTemporaryRT(shaderID);
-
       // Add command buffer
-      cam.AddCommandBuffer(CameraEvent.AfterEverything, cb);
+      // Note to self: CameraEvent.AfterImageEffects is the last CameraEvent before blitting to eye buffers,
+      // which means it's the last event we can rely on for rendering to both eyes in single-pass instanced rendering
+      cam.AddCommandBuffer(CameraEvent.AfterImageEffects, cb);
       _cameras[cam] = cb;
     }
 
     private void OnDisable()
     {
       foreach (var (cam, cb) in _cameras)
-        cam.RemoveCommandBuffer(CameraEvent.AfterEverything, cb);
+        cam.RemoveCommandBuffer(CameraEvent.AfterImageEffects, cb);
       _cameras.Clear();
 
       _renderers.Zip(_enabledStates, (rend, enable) => rend.enabled = enable);

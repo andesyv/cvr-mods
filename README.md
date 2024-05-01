@@ -5,7 +5,7 @@ This repo contains all my mods for ChilloutVR. All the mods presented uses [BepI
 ## Mods
 
 ### [MenuReRender](src/MenuReRender/README.md)
-This is a BepInEx mod that renders the menu and the quickmenu on top of the screen after everything else, making it virtually impossible (at least to my knowledge) for people to block your access to the menu. This mod is currently limited to desktop users.
+This is a MelonLoader mod that renders the menu and the quickmenu on top of the screen after everything else, making it virtually impossible (at least to my knowledge) for people to block your access to the menu.
 
 ### [StickyMenu](src/StickyMenu/README.md)
 A small ChilloutVR mod that makes the main menu follow your view. It also enables you to grab the main menu as a prop and position
