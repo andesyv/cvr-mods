@@ -5,6 +5,8 @@ VisualStudioVersion = 17.3.32811.315
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "MenuReRender", "src\MenuReRender\MenuReRender.csproj", "{7A938484-3C88-403E-AE2F-CAB9D8B88D8B}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "VideoCalls", "src\VideoCalls\VideoCalls.csproj", "{154F6FB0-939D-4937-BA58-D7916A3BD2CE}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -15,6 +17,10 @@ Global
 		{7A938484-3C88-403E-AE2F-CAB9D8B88D8B}.Debug|x64.Build.0 = Debug|x64
 		{7A938484-3C88-403E-AE2F-CAB9D8B88D8B}.Release|x64.ActiveCfg = Release|x64
 		{7A938484-3C88-403E-AE2F-CAB9D8B88D8B}.Release|x64.Build.0 = Release|x64
+		{154F6FB0-939D-4937-BA58-D7916A3BD2CE}.Debug|x64.ActiveCfg = Debug|x64
+		{154F6FB0-939D-4937-BA58-D7916A3BD2CE}.Debug|x64.Build.0 = Debug|x64
+		{154F6FB0-939D-4937-BA58-D7916A3BD2CE}.Release|x64.ActiveCfg = Release|x64
+		{154F6FB0-939D-4937-BA58-D7916A3BD2CE}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
