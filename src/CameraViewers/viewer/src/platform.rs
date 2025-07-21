@@ -1,41 +1,45 @@
-use std::{ffi::c_void, sync::Arc};
+use crate::external_image::ExternalImage;
+use std::sync::Arc;
+use vulkano::image::Image;
+use vulkano::sync::semaphore::{ExternalSemaphoreHandleType, ExternalSemaphoreInfo, Semaphore};
+#[cfg(unix)]
+use vulkano::Validated;
 use vulkano::{
     buffer::{BufferUsage, ExternalBufferInfo},
     device::physical::PhysicalDevice,
     memory::ExternalMemoryHandleType,
-    sync::{ExternalSemaphoreHandleType, ExternalSemaphoreInfo, Semaphore},
 };
+#[cfg(windows)]
+use windows::Win32::Foundation::HANDLE as WinHandle;
 
-use crate::external_image::ExternalImage;
-use windows::Win32::Foundation::HANDLE;
+#[cfg(windows)]
+pub type NativeManagedHandle = WinHandle;
+#[cfg(unix)]
+pub type NativeManagedHandle = std::fs::File;
 
-// #[cfg(windows)]
-// pub const fn get_allowed_external_semaphore_handle_types() -> ExternalSemaphoreHandleTypes {
-//     ExternalSemaphoreHandleTypes {
-//         opaque_win32: false,
-//         opaque_win32_kmt: true,
-//         ..ExternalSemaphoreHandleTypes::none()
-//     }
-// }
-
+#[cfg(windows)]
+type NativeRawHandle = std::os::windows::raw::HANDLE;
 // #[cfg(unix)]
-// pub const fn get_allowed_external_semaphore_handle_types() -> ExternalSemaphoreHandleTypes {
-//     ExternalSemaphoreHandleTypes::posix()
-// }
+// type NativeRawHandle = std::os::fd::RawFd;
 
-// #[cfg(windows)]
-// pub const fn get_allowed_external_memory_handle_types() -> ExternalMemoryHandleTypes {
-//     ExternalMemoryHandleTypes {
-//         opaque_win32: false,
-//         opaque_win32_kmt: true,
-//         ..ExternalMemoryHandleTypes::none()
-//     }
-// }
+// Rust does not allow anonymous structs (yet), and so the current usage of this enum will have Rust
+// complain about fields not being read
+#[allow(dead_code)]
+enum MemoryOwnerObject {
+    Semaphore(Arc<Semaphore>),
+    Image(Arc<Image>),
+}
 
-// #[cfg(unix)]
-// pub const fn get_allowed_external_memory_handle_types() -> ExternalMemoryHandleTypes {
-//     ExternalMemoryHandleTypes::posix()
-// }
+// Stores managed IPC handles.
+// On unix: This stores Fd file handles, which need to be kept alive, hence this object
+// On Windows: This stores native Win32 handles, which are managed by the OS and not us (I hope)
+#[derive(Default)]
+pub struct MemoryExporter {
+    #[cfg(unix)]
+    handles: Vec<NativeManagedHandle>,
+    #[cfg(unix)]
+    owner_objects: Vec<MemoryOwnerObject>,
+}
 
 pub fn get_external_semaphore_type(
     physical_device: &PhysicalDevice,
@@ -49,7 +53,7 @@ pub fn get_external_semaphore_type(
             println!("Properties: {:?}", properties);
             if properties
                 .compatible_handle_types
-                .intersects(&handle_type.into())
+                .intersects(handle_type.into())
                 && properties.exportable
             {
                 return Some(handle_type);
@@ -85,7 +89,7 @@ pub fn get_external_memory_type(
             if properties
                 .external_memory_properties
                 .compatible_handle_types
-                .intersects(&handle_type.into())
+                .intersects(handle_type.into())
                 && properties.external_memory_properties.exportable
             {
                 return Some(handle_type);
@@ -95,63 +99,47 @@ pub fn get_external_memory_type(
     None
 }
 
-#[cfg(target_pointer_width = "64")]
-fn format_handle(raw_ptr: *const c_void) -> String {
+#[cfg(all(windows, target_pointer_width = "64"))]
+fn format_handle(handle: &NativeManagedHandle) -> String {
+    let raw_ptr = handle.0 as NativeRawHandle;
     format!("{:016x}", raw_ptr as usize)
 }
 
-#[cfg(windows)]
-fn print_semaphore_handle(identifier: &str, handle: &HANDLE) {
+#[cfg(unix)]
+fn format_handle(handle: &NativeManagedHandle) -> String {
+    use std::os::fd::AsRawFd;
+    format!("{}", handle.as_raw_fd())
+}
+
+fn print_semaphore_handle(identifier: &str, handle: &NativeManagedHandle) {
+    const HANDLE_TYPE: &'static str = if cfg!(windows) {
+        "OpaqueWin32"
+    } else {
+        "OpaqueFd"
+    };
     println!(
-        "Connection data: {{\"semaphore\", \"{}\", handle type: \"OpaqueWin32\", \"{}\"}}",
+        "Connection data: {{\"semaphore\", \"{}\", handle type: \"{}\", \"{}\"}}",
         identifier,
-        format_handle(handle.0 as std::os::windows::raw::HANDLE)
+        HANDLE_TYPE,
+        format_handle(handle)
     );
 }
 
-#[cfg(windows)]
-fn print_memory_handle(
-    identifier: &str,
-    handle: &HANDLE,
-    image: &Arc<ExternalImage>,
-) {
+fn print_memory_handle(identifier: &str, image: &ExternalImage, handle: &NativeManagedHandle) {
+    const HANDLE_TYPE: &'static str = if cfg!(windows) {
+        "OpaqueWin32"
+    } else {
+        "OpaqueFd"
+    };
     println!(
-        "Connection data: {{\"image\", \"{}\", handle type: \"OpaqueWin32\", \"{}\", size: \"{}\", format: \"{:?}\" }}",
+        "Connection data: {{\"image\", \"{}\", handle type: \"{}\", \"{}\", size: \"{}\", format: \"{:?}\" }}",
         identifier,
-        format_handle(handle.0 as std::os::windows::raw::HANDLE),
-        image.as_ref().device_memory_allocation_size(),
+        HANDLE_TYPE,
+        format_handle(handle),
+        image.device_memory_allocation_size(),
         image.format()
     );
 }
-
-// #[cfg(windows)]
-// pub fn print_memory_handle(
-//     identifier: &str,
-//     image: &Arc<ExternalImage>,
-//     handle_type: ExternalMemoryHandleType,
-// ) {
-//     // Should really properly format the handle, but my lazy ass just relies on the Debug trait instead
-
-//     println!(
-//         "Connection data: {{\"image\", \"{}\", \"{:?}\", \"{}\", size: \"{}\", format: \"{:?}\" }}",
-//         identifier,
-//         handle_type,
-//         format_handle(image.export().unwrap()),
-//         image.as_ref().device_memory_allocation_size(),
-//         image.format()
-//     );
-// }
-
-// pub fn export_memory_handle(image: &StorageImage) -> Result<_, DeviceMemoryError> {
-//     let allocation = match image.inner.memory() {
-//         ImageMemory::Normal(a) => &a[0],
-//         _ => unreachable!(),
-//     };
-
-//     allocation
-//         .device_memory()
-//         .export_fd(ExternalMemoryHandleType::OpaqueFd)
-// }
 
 #[cfg(windows)]
 unsafe fn find_parent_process_id() -> Option<u32> {
@@ -161,90 +149,149 @@ unsafe fn find_parent_process_id() -> Option<u32> {
         Foundation::CloseHandle,
         System::{
             Diagnostics::ToolHelp::{
-                CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32,
+                CreateToolhelp32Snapshot, PROCESSENTRY32, Process32First, Process32Next,
                 TH32CS_SNAPPROCESS,
             },
             Threading::GetCurrentProcessId,
         },
     };
 
-    let current_process_id = GetCurrentProcessId();
-    let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).ok()?;
-    let mut process_entry = PROCESSENTRY32::default();
-    process_entry.dwSize = size_of::<PROCESSENTRY32>().try_into().unwrap();
-    Process32First(snapshot, &mut process_entry).unwrap();
+    unsafe {
+        let current_process_id = GetCurrentProcessId();
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).ok()?;
+        let mut process_entry = PROCESSENTRY32::default();
+        process_entry.dwSize = size_of::<PROCESSENTRY32>().try_into().unwrap();
+        Process32First(snapshot, &mut process_entry).unwrap();
 
-    loop {
-        if process_entry.th32ProcessID == current_process_id {
-            CloseHandle(snapshot).unwrap();
-            return Some(process_entry.th32ParentProcessID);
+        loop {
+            if process_entry.th32ProcessID == current_process_id {
+                CloseHandle(snapshot).unwrap();
+                return Some(process_entry.th32ParentProcessID);
+            }
+
+            if Process32Next(snapshot, &mut process_entry).is_err() {
+                break;
+            }
         }
 
-        if Process32Next(snapshot, &mut process_entry).is_err() {
-            break;
-        }
+        CloseHandle(snapshot).unwrap();
     }
-
-    CloseHandle(snapshot).unwrap();
 
     None
 }
 
 #[cfg(windows)]
-unsafe fn create_owner_process_accessible_memory_handle(memory_handle: &HANDLE) -> HANDLE {
+unsafe fn create_owner_process_accessible_memory_handle(memory_handle: &WinHandle) -> WinHandle {
     use windows::Win32::{
-        Foundation::{CloseHandle, DuplicateHandle, DUPLICATE_SAME_ACCESS},
+        Foundation::{CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle},
         System::Threading::{GetCurrentProcess, OpenProcess, PROCESS_ALL_ACCESS},
     };
 
-    let current_process = GetCurrentProcess();
-    let parent_process_id = find_parent_process_id().unwrap();
-    let parent_process = OpenProcess(PROCESS_ALL_ACCESS, false, parent_process_id).unwrap();
-    let mut new_handle = HANDLE::default();
-    DuplicateHandle(
-        current_process,
-        *memory_handle,
-        parent_process,
-        &mut new_handle,
-        0,
-        false,
-        DUPLICATE_SAME_ACCESS,
-    )
-    .unwrap();
-    CloseHandle(parent_process).unwrap();
+    let mut new_handle = WinHandle::default();
+    unsafe {
+        let current_process = GetCurrentProcess();
+        let parent_process_id = find_parent_process_id().unwrap();
+        let parent_process = OpenProcess(PROCESS_ALL_ACCESS, false, parent_process_id).unwrap();
+        DuplicateHandle(
+            current_process,
+            *memory_handle,
+            parent_process,
+            &mut new_handle,
+            0,
+            false,
+            DUPLICATE_SAME_ACCESS,
+        )
+        .unwrap();
+        CloseHandle(parent_process).unwrap();
+    }
     new_handle
 }
 
-#[cfg(windows)]
-pub fn export_semaphore_to_owner_process(
-    identifier: &str,
-    semaphore: &Arc<Semaphore>,
-    handle_type: ExternalSemaphoreHandleType,
-) {
-    if handle_type != ExternalSemaphoreHandleType::OpaqueWin32 {
-        panic!("Windows export function has only been implemented for Opaque Win 32 NT handles");
+impl MemoryExporter {
+    #[cfg(windows)]
+    pub fn export_semaphore_to_owner_process(
+        &mut self,
+        identifier: &str,
+        semaphore: &Arc<Semaphore>,
+        handle_type: ExternalSemaphoreHandleType,
+    ) {
+        if handle_type != ExternalSemaphoreHandleType::OpaqueWin32 {
+            unimplemented!(
+                "Windows export function has only been implemented for Opaque Win 32 NT handles"
+            );
+        }
+
+        let exported_handle = WinHandle(semaphore.export_win32_handle(handle_type).unwrap() as *mut std::ffi::c_void);
+        unsafe {
+            let new_handle = create_owner_process_accessible_memory_handle(&exported_handle);
+            print_semaphore_handle(identifier, &new_handle);
+        };
     }
 
-    let exported_handle = HANDLE(semaphore.export_win32_handle(handle_type).unwrap() as isize);
-    unsafe {
-        let new_handle = create_owner_process_accessible_memory_handle(&exported_handle);
-        print_semaphore_handle(identifier, &new_handle);
-    };
-}
+    #[cfg(unix)]
+    pub fn export_semaphore_to_owner_process(
+        &mut self,
+        identifier: &str,
+        semaphore: &Arc<Semaphore>,
+        handle_type: ExternalSemaphoreHandleType,
+    ) {
+        if handle_type != ExternalSemaphoreHandleType::OpaqueFd {
+            unimplemented!("Unix export function has only been implemented for Opaque FD handles");
+        }
 
-#[cfg(windows)]
-pub fn export_memory_to_owner_process(
-    identifier: &str,
-    image: &Arc<ExternalImage>,
-    handle_type: ExternalMemoryHandleType,
-) {
-    if handle_type != ExternalMemoryHandleType::OpaqueWin32 {
-        panic!("Windows export function has only been implemented for Opaque Win 32 NT handles");
+        self.owner_objects
+            .push(MemoryOwnerObject::Semaphore(semaphore.clone()));
+
+        unsafe {
+            let file = semaphore
+                .export_fd(handle_type)
+                .map_err(Validated::unwrap)
+                .unwrap();
+            print_semaphore_handle(identifier, &file);
+            self.handles.push(file);
+        }
+
+        // TODO: In owner-process, use pidfd_getfd to duplicate (steal) the handle
     }
 
-    let exported_handle = HANDLE(image.export().unwrap() as isize);
-    unsafe {
-        let new_handle = create_owner_process_accessible_memory_handle(&exported_handle);
-        print_memory_handle(identifier, &new_handle, image);
-    };
+    #[cfg(windows)]
+    pub fn export_memory_to_owner_process(
+        &mut self,
+        identifier: &str,
+        image: &ExternalImage,
+        handle_type: ExternalMemoryHandleType,
+    ) {
+        if handle_type != ExternalMemoryHandleType::OpaqueWin32 {
+            unimplemented!(
+                "Windows export function has only been implemented for Opaque Win 32 NT handles"
+            );
+        }
+
+        let exported_handle = image.export().unwrap();
+        unsafe {
+            let new_handle = create_owner_process_accessible_memory_handle(&exported_handle);
+            print_memory_handle(identifier, image, &new_handle);
+        };
+    }
+
+    #[cfg(unix)]
+    pub fn export_memory_to_owner_process(
+        &mut self,
+        identifier: &str,
+        image: &ExternalImage,
+        handle_type: ExternalMemoryHandleType,
+    ) {
+        if handle_type != ExternalMemoryHandleType::OpaqueFd {
+            unimplemented!("Unix export function has only been implemented for Opaque FD handles");
+        }
+
+        self.owner_objects
+            .push(MemoryOwnerObject::Image(image.into()));
+
+        let file = image.export().unwrap();
+        print_memory_handle(identifier, image, &file);
+        self.handles.push(file);
+
+        // TODO: In owner-process, use pidfd_getfd to duplicate (steal) the handle
+    }
 }

@@ -1,16 +1,17 @@
 [package]
 name = "viewer"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-vulkano = "0.32.*"
-vulkano-win = "0.32.*"
-vulkano-shaders = "0.32.*"
-ash = "0.37.0" # For some minor functionality not covered by vulkano
-winit = "0.27.5" # Apparantly has to be hardcoded to same version vulkano-win uses
-bytemuck = "1.12.1"
+vulkano = "0.35.*"
+vulkano-win = "0.34.*"
+vulkano-shaders = "0.35.*"
+ash = "0.38.0" # For some minor functionality not covered by vulkano
+winit = "0.30.11" # Apparantly has to be hardcoded to same version vulkano-win uses
 cgmath = "0.18.0" # Seems like a nice simple math library for non-complex CG coding
-windows = { version = "0.54.0", features = ["Win32_System_Diagnostics_ToolHelp", "Win32_System_Threading"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61.3", features = ["Win32_System_Diagnostics_ToolHelp", "Win32_System_Threading"] }

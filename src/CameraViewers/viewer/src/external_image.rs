@@ -1,22 +1,21 @@
-use std::{mem::MaybeUninit, sync::Arc};
-
-use ash::vk::MemoryGetWin32HandleInfoKHR;
+use std::sync::Arc;
+use vulkano::image::view::ImageView;
+use vulkano::image::{Image, ImageMemory, ImageType};
+use vulkano::memory::allocator::MemoryTypeFilter;
+use vulkano::memory::{MemoryAllocateInfo, ResourceMemory};
 use vulkano::{
-    device::{DeviceOwned, Device},
+    DeviceSize, Validated, VulkanError,
+    device::Device,
     format::Format,
     image::{
-        sys::{Image, ImageCreateInfo, ImageMemory, RawImage},
-        ImageCreateFlags, ImageDimensions, ImageError, ImageFormatInfo, ImageUsage, ImageAccess, ImageInner, ImageLayout, ImageDescriptorLayouts,
+        ImageCreateFlags, ImageUsage,
+        sys::{ImageCreateInfo, RawImage},
     },
     memory::{
-        allocator::{AllocationCreationError, MemoryAllocator, MemoryUsage},
-        DedicatedAllocation, DeviceMemory, DeviceMemoryError, ExternalMemoryHandleType,
+        DedicatedAllocation, DeviceMemory, ExternalMemoryHandleType, allocator::MemoryAllocator,
     },
-    sync::Sharing,
-    DeviceSize,
-    // OomError,
-    VulkanError,
 };
+use crate::platform::NativeManagedHandle;
 
 #[derive(Debug)]
 pub struct ExternalImage {
@@ -24,160 +23,88 @@ pub struct ExternalImage {
     handle_type: ExternalMemoryHandleType,
 }
 
-#[derive(Debug)]
-pub enum ExternalImageError {
-    ImageError(ImageError),
-    // OomError(OomError),
-    AllocationCreationError(AllocationCreationError),
-    VulkanError(VulkanError),
-    // Unimplemented,
-}
+pub type ExternalImageError = VulkanError;
 
-impl From<ImageError> for ExternalImageError {
-    fn from(error: ImageError) -> Self {
-        ExternalImageError::ImageError(error)
-    }
-}
-
-impl From<AllocationCreationError> for ExternalImageError {
-    fn from(error: AllocationCreationError) -> Self {
-        ExternalImageError::AllocationCreationError(error)
-    }
-}
-
-impl From<VulkanError> for ExternalImageError {
-    fn from(error: VulkanError) -> Self {
-        ExternalImageError::VulkanError(error)
+impl From<&ExternalImage> for Arc<Image> {
+    fn from(image: &ExternalImage) -> Self {
+        image.inner.clone()
     }
 }
 
 impl ExternalImage {
-    // pub fn new(
-    //     device: Arc<Device>,
-    //     create_info: ExternalImageCreateInfo,
-    // ) -> Result<ExternalImage, ExternalImageError> {
-    //     let image = UnsafeImage::new(device, create_info.into())?;
-
-    //     let mem_reqs = image.memory_requirements();
-    //     let memory = MemoryPool::alloc_from_requirements(
-    //         &Device::standard_pool(&device),
-    //         &mem_reqs,
-    //         AllocLayout::Optimal,
-    //         MappingRequirement::DoNotMap,
-    //         Some(DedicatedAllocation::Image(&image)),
-    //         |t| {
-    //             if t.is_device_local() {
-    //                 AllocFromRequirementsFilter::Preferred
-    //             } else {
-    //                 AllocFromRequirementsFilter::Allowed
-    //             }
-    //         },
-    //     )?;
-    //     // debug_assert!((memory.offset() % mem_reqs.alignment) == 0);
-    //     unsafe {
-    //         image.bind_memory(memory.memory(), memory.offset())?;
-    //     }
-
-    //     Ok(ExternalImage { image: image })
-    // }
-
-    // Copied from vulkano/image/storage.rs
-    pub fn new(
-        allocator: &(impl MemoryAllocator + ?Sized),
-        dimensions: ImageDimensions,
-        format: Format,
-        usage: ImageUsage,
-        flags: ImageCreateFlags,
-        queue_family_indices: impl IntoIterator<Item = u32>,
+    pub fn new<M>(
+        device: Arc<Device>,
+        memory_allocator: &M,
+        dimensions: [u32; 2],
         handle_type: ExternalMemoryHandleType,
-    ) -> Result<Arc<ExternalImage>, ExternalImageError> {
-        assert_eq!(
-            queue_family_indices.into_iter().count(),
-            1,
-            "This function currently only supports one queue family."
-        );
-        // let queue_family_indices = queue_family_indices.into_iter().collect();
-        assert!(!flags.disjoint); // TODO: adjust the code below to make this safe
-
-        let external_memory_properties = allocator
-            .device()
-            .physical_device()
-            .image_format_properties(ImageFormatInfo {
-                flags,
-                format: Some(format),
-                image_type: dimensions.image_type(),
-                usage,
-                external_memory_handle_type: Some(handle_type),
-                ..Default::default()
-            })
-            .unwrap()
-            .unwrap()
-            .external_memory_properties;
-        // VUID-VkExportMemoryAllocateInfo-handleTypes-00656
-        assert!(external_memory_properties.exportable);
-
-        // VUID-VkMemoryAllocateInfo-pNext-00639
-        // Guaranteed because we always create a dedicated allocation
-
-        // let external_memory_handle_types = handle_type.into();
+    ) -> Result<Self, ExternalImageError>
+    where
+        M: MemoryAllocator,
+    {
         let raw_image = RawImage::new(
-            allocator.device().clone(),
+            device.clone(),
             ImageCreateInfo {
-                flags,
-                dimensions,
-                format: Some(format),
-                usage,
-                // sharing: if queue_family_indices.len() >= 2 {
-                //     Sharing::Concurrent(queue_family_indices)
-                // } else {
-                //     Sharing::Exclusive
-                // },
-                sharing: Sharing::Exclusive,
+                flags: ImageCreateFlags::MUTABLE_FORMAT,
+                image_type: ImageType::Dim2d,
+                format: Format::R16G16B16A16_UNORM,
+                extent: [dimensions[0], dimensions[1], 1],
+                usage: ImageUsage::TRANSFER_SRC | ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
                 external_memory_handle_types: handle_type.into(),
                 ..Default::default()
             },
-        )?;
-        let requirements = raw_image.memory_requirements()[0];
-        let memory_type_index = allocator
-            .find_memory_type_index(requirements.memory_type_bits, MemoryUsage::GpuOnly.into())
-            .expect("failed to find a suitable memory type");
+        )
+        .map_err(Validated::unwrap)?;
 
-        match unsafe {
-            allocator.allocate_dedicated_unchecked(
-                memory_type_index,
-                requirements.size,
-                Some(DedicatedAllocation::Image(&raw_image)),
-                handle_type.into(),
-            )
-        } {
-            Ok(alloc) => {
-                debug_assert!(alloc.offset() % requirements.alignment == 0);
-                debug_assert!(alloc.size() == requirements.size);
-                let inner = Arc::new(unsafe {
-                    raw_image
-                        .bind_memory_unchecked([alloc])
-                        .map_err(|(err, _, _)| err)?
-                });
+        let image_requirements = raw_image.memory_requirements()[0];
 
-                Ok(Arc::new(ExternalImage { inner, handle_type }))
-            }
-            Err(err) => Err(err.into()),
-        }
+        let image_memory = DeviceMemory::allocate(
+            device,
+            MemoryAllocateInfo {
+                allocation_size: image_requirements.layout.size(),
+                memory_type_index: memory_allocator
+                    .find_memory_type_index(
+                        image_requirements.memory_type_bits,
+                        MemoryTypeFilter::PREFER_DEVICE,
+                    )
+                    .unwrap(),
+                dedicated_allocation: Some(DedicatedAllocation::Image(&raw_image)),
+                export_handle_types: handle_type.into(),
+                ..Default::default()
+            },
+        )
+        .map_err(Validated::unwrap)?;
+
+        // let allocation_size = image_memory.allocation_size();
+        // let image_fd = image_memory
+        //     .export_fd(ExternalMemoryHandleType::OpaqueFd)
+        //     .unwrap();
+
+        let image = Arc::new(
+            raw_image
+                .bind_memory([ResourceMemory::new_dedicated(image_memory)])
+                .map_err(|(err, _, _)| err.unwrap())?,
+        );
+
+        Ok(Self {
+            inner: image,
+            handle_type,
+        })
     }
 
     #[cfg(windows)]
     fn export_memory(
         memory: &DeviceMemory,
         handle_type: ExternalMemoryHandleType,
-    ) -> Result<*mut std::ffi::c_void, DeviceMemoryError> {
+    ) -> Result<NativeManagedHandle, VulkanError> {
+        use vulkano::VulkanObject;
+        use std::mem::MaybeUninit;
+        use ash::vk::MemoryGetWin32HandleInfoKHR;
+        use windows::Win32::Foundation::HANDLE;
+        use vulkano::device::DeviceOwned;
+
         // VUID-VkMemoryGetFdInfoKHR-handleType-parameter
         // handle_type.validate_device(memory.device())?; // Private function. Probably fine...
 
-        use vulkano::VulkanObject;
-
-        if cfg!(not(windows)) {
-            unreachable!("You should not be here");
-        }
 
         // VUID-VkMemoryGetFdInfoKHR-handleType-00672
 
@@ -190,7 +117,7 @@ impl ExternalImage {
                 | ExternalMemoryHandleType::D3D12Resource
                 | ExternalMemoryHandleType::D3D12Heap
         ) {
-            return Err(DeviceMemoryError::HandleTypeNotSupported { handle_type });
+            panic!("Unsupported handle type: {:?}", handle_type);
         }
 
         // VUID-VkMemoryGetFdInfoKHR-handleType-00671
@@ -201,7 +128,7 @@ impl ExternalImage {
         //     return Err(DeviceMemoryError::HandleTypeNotSupported { handle_type });
         // }
 
-        debug_assert!(
+        assert!(
             memory
                 .device()
                 .enabled_extensions()
@@ -228,7 +155,7 @@ impl ExternalImage {
             )
             .result()
             .map_err(VulkanError::from)?;
-            output.assume_init()
+            HANDLE(output.assume_init() as *mut std::ffi::c_void)
         })
     }
 
@@ -236,8 +163,8 @@ impl ExternalImage {
     fn export_memory(
         memory: &DeviceMemory,
         handle_type: ExternalMemoryHandleType,
-    ) -> Result<std::fs::File, DeviceMemoryError> {
-        memory.export_fd(handle_type)
+    ) -> Result<NativeManagedHandle, VulkanError> {
+        memory.export_fd(handle_type).map_err(Validated::unwrap)
     }
 
     fn get_device_memory(&self) -> &DeviceMemory {
@@ -249,7 +176,7 @@ impl ExternalImage {
         allocation.device_memory()
     }
 
-    pub fn export(&self) -> Result<*mut std::ffi::c_void, DeviceMemoryError> {
+    pub fn export(&self) -> Result<NativeManagedHandle, VulkanError> {
         Self::export_memory(self.get_device_memory(), self.handle_type)
     }
 
@@ -258,47 +185,13 @@ impl ExternalImage {
     }
 
     pub fn format(&self) -> Format {
-        self.inner.format().unwrap()
+        self.inner.format()
     }
 }
 
-// Gracefully copied from vulkano::StorageImage
-unsafe impl DeviceOwned for ExternalImage {
-    #[inline]
-    fn device(&self) -> &Arc<Device> {
-        self.inner.device()
-    }
-}
-
-unsafe impl ImageAccess for ExternalImage {
-    #[inline]
-    fn inner(&self) -> ImageInner<'_> {
-        ImageInner {
-            image: &self.inner,
-            first_layer: 0,
-            num_layers: self.inner.dimensions().array_layers(),
-            first_mipmap_level: 0,
-            num_mipmap_levels: 1,
-        }
-    }
-
-    #[inline]
-    fn initial_layout_requirement(&self) -> ImageLayout {
-        ImageLayout::General
-    }
-
-    #[inline]
-    fn final_layout_requirement(&self) -> ImageLayout {
-        ImageLayout::General
-    }
-
-    #[inline]
-    fn descriptor_layouts(&self) -> Option<ImageDescriptorLayouts> {
-        Some(ImageDescriptorLayouts {
-            storage_image: ImageLayout::General,
-            combined_image_sampler: ImageLayout::General,
-            sampled_image: ImageLayout::General,
-            input_attachment: ImageLayout::General,
-        })
+impl TryFrom<&ExternalImage> for Arc<ImageView> {
+    type Error = VulkanError;
+    fn try_from(value: &ExternalImage) -> Result<Self, Self::Error> {
+        ImageView::new_default(value.inner.clone()).map_err(Validated::unwrap)
     }
 }
