@@ -1,3 +1,9 @@
+#![feature(unix_socket_ancillary_data)]
+
+use std::env::args;
+use std::io::Write;
+use std::os::unix::net::UnixStream;
+use std::path::Path;
 use std::sync::Arc;
 
 // use platform::get_allowed_external_semaphore_handle_types;
@@ -31,7 +37,24 @@ const WIDTH: u32 = 800;
 const HEIGHT: u32 = 600;
 
 fn main() {
-    println!("Hello, triangle!");
+    println!("Hello, viewer!");
+
+    if cfg!(unix) {
+        let args: Vec<_> = args().collect();
+        if let Some(possible_socket_path) = args.get(1) {
+            println!("Possible socket: {}", possible_socket_path);
+            let socket_path = Path::new(possible_socket_path);
+            if socket_path.extension().map(|e| e == "sock").unwrap_or(false) && socket_path.exists() {
+                println!("Using socket mode!");
+
+                let mut stream = UnixStream::connect(socket_path).expect("Failed to connect to socket");
+                stream.write(b"Hello from child!").unwrap();
+                stream.recv_vectored_with_ancillary()
+                return;
+            }
+        }
+    }
+
     let event_loop = EventLoop::new().unwrap();
     let mut window = Window::default();
     event_loop.run_app(&mut window).unwrap();

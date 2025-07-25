@@ -1,3 +1,4 @@
+use std::os::fd::AsRawFd;
 use crate::external_image::ExternalImage;
 use std::sync::Arc;
 use vulkano::image::Image;
@@ -39,6 +40,22 @@ pub struct MemoryExporter {
     handles: Vec<NativeManagedHandle>,
     #[cfg(unix)]
     owner_objects: Vec<MemoryOwnerObject>,
+}
+
+impl MemoryExporter {
+    #[cfg(unix)]
+    pub fn is_valid(&self) -> bool {
+        for handle in self.handles.iter() {
+            if unsafe { libc::fcntl(handle.as_raw_fd(), libc::F_GETFD) } < 0 {
+                return false;
+            }
+        }
+        true
+    }
+    #[cfg(windows)]
+    pub fn is_valid(&self) -> bool {
+        true
+    }
 }
 
 pub fn get_external_semaphore_type(

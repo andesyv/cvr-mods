@@ -18,26 +18,20 @@ set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "com.andough.camera
 
 target_include_directories(unity-plugin PRIVATE ${LIB_DIR}/UnityPluginAPI)
 
-if(${BUILD_TEST})
-  add_executable(test)
-  
-  if (WIN32)
-    target_compile_definitions(test PRIVATE _WIN32)
-    target_compile_options(test PRIVATE /diagnostics:caret)
-  endif()
-
-  # GLAD OpenGL loader
-  target_include_directories(test PRIVATE ${LIB_DIR}/glad/include)
-  target_sources(test PRIVATE ${LIB_DIR}/glad/src/glad.c)
-
-  # GLFW
-  find_package(glfw3 CONFIG REQUIRED)
-  target_link_libraries(test PRIVATE glfw)
-
-  # GLM
-  find_package(glm CONFIG REQUIRED)
-  target_link_libraries(test PRIVATE glm::glm)
-endif()
+## On linux, we make use of the system function pidfd_getfd, which requires Linux Kernel >= 5.6
+#if(UNIX)
+#  find_program(UNAME_EXEC uname)
+#  execute_process(COMMAND ${UNAME_EXEC} -r
+#    OUTPUT_VARIABLE KERNEL_VERSION_STR
+#    OUTPUT_STRIP_TRAILING_WHITESPACE
+#  )
+#
+##  string(REGEX MATCH "([0-9]+\.[0-9]+)" KERNEL_VERSION ${KERNEL_VERSION_STR})
+#
+#  if(${KERNEL_VERSION_STR} VERSION_LESS "5.6")
+#    message(FATAL_ERROR "A linux Kernel >= 5.6 is required")
+#  endif()
+#endif()
 
 # Source files
 add_subdirectory(src)

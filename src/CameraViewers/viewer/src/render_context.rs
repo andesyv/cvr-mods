@@ -323,6 +323,8 @@ pub struct RenderContext {
     framebuffers: Vec<Arc<Framebuffer>>,
     swapchain: Arc<Swapchain>,
     swapchain_fences: Vec<Option<Box<dyn GpuFuture>>>,
+    // Has to be kept alive but will never be used
+    pub(crate) memory_exporter: MemoryExporter,
 }
 
 impl RenderContext {
@@ -536,6 +538,10 @@ impl RenderContext {
             Default::default(),
         ));
 
+        if cfg!(unix) {
+            assert!(memory_exporter.is_valid(), "Memory is no longer valid");
+        }
+
         Self {
             pipeline,
             command_buffer_allocator,
@@ -544,6 +550,7 @@ impl RenderContext {
             framebuffers,
             swapchain,
             swapchain_fences: Vec::new(),
+            memory_exporter: memory_exporter,
         }
 
         //
