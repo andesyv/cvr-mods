@@ -6,9 +6,13 @@ if (WIN32)
   target_compile_options(interop_test PRIVATE /diagnostics:caret)
 endif()
 
-# GLAD OpenGL loader
-target_include_directories(interop_test PRIVATE ${LIB_DIR}/glad/include)
-target_sources(interop_test PRIVATE ${LIB_DIR}/glad/src/glad.c)
+## GLAD OpenGL loader
+#target_include_directories(interop_test PRIVATE ${LIB_DIR}/glad/include)
+#target_sources(interop_test PRIVATE ${LIB_DIR}/glad/src/glad.c)
+
+# GLBinding
+find_package(glbinding CONFIG REQUIRED)
+target_link_libraries(interop_test PRIVATE glbinding::glbinding)
 
 # GLFW
 find_package(glfw3 CONFIG REQUIRED)

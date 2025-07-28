@@ -10,8 +10,10 @@
 #include <thread>
 #include <random>
 #include <future>
+#include <unordered_set>
 
-#include <glad/glad.h>
+// #include <glad/glad.h>
+#include <glbinding/glbinding.h>
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
@@ -22,12 +24,12 @@
 #include <windows.h>
 #elif __linux__
 #include <cstdio>
-#include <fcntl.h>
+#include <fcntl.h> // Linux FD manipulation utility (fcntl(2)
 // #include <sys/syscall.h>
 #include <unistd.h>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <cerrno>
+#include <sys/socket.h> // Unix socket API
+#include <sys/un.h> // Unix domain socket address structure (sockaddr_un(3))
+#include <cerrno> // Unix error codes
 #endif
 
 #include "Resources.hpp"
@@ -139,10 +141,100 @@ std::string extract_output_from_child_pipe(HANDLE* pipe) {
 
 std::vector<ConnectionData> fetch_connection_data_from_child_channel(HANDLE* child_pipe)
 {
-  std::string child_pipe_output{ extract_output_from_child_pipe(child_output_channel) };
-  print_child_pipe(child_pipe_output);
-  return fetch_connection_data_from_child_pipe_output(child_pipe_output);
+  std::string child_string_output{ extract_output_from_child_pipe(child_output_channel) };
+  print_child_pipe(child_string_output);
+  return fetch_connection_data_from_child_string_output(child_string_output);
 }
+
+// Apparently, simply writing out the bytes of the handle and then reconstructing a handle from that string of bytes
+// does not work. So here's some alternative pseudocode stolen from
+// https://medium.com/@s12deff/share-windows-handle-using-inter-process-connection-061e51097758
+// The plan would then maybe be to pass in a temporary file mapped to shared memory where the viewer can copy it's
+// handles to. After which the plugin can then read back from.
+
+// #include <Windows.h>
+// #include <iostream>
+//
+// using namespace std;
+//
+// class Serialitzator {
+// private:
+//   string fileName;
+// public:
+//   // Constructor
+//   Serialitzator(string fileName) {
+//     this->fileName = fileName;
+//   }
+//
+//   // Getters
+//   string getFileName() {
+//     return this->fileName;
+//   }
+//   // Setters
+//   void setFileName(string fileName) {
+//     this->fileName = fileName;
+//   }
+//
+//   // Methods
+//   bool serializeHandle(HANDLE targetHandle) {
+//     HANDLE mappedFile = NULL;
+//     LPVOID mappedView;
+//     mappedFile = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, sizeof(targetHandle), "ipcObject");
+//     if (mappedFile == NULL) {
+//       cout << "Error creating the mapped file";
+//       return false;
+//     }
+//
+//     mappedView = MapViewOfFile(mappedFile, FILE_MAP_WRITE, 0, 0, sizeof(targetHandle));
+//     if (mappedView == NULL) {
+//       cout << "Error creating the view";
+//       return false;
+//     }
+//
+//     RtlMoveMemory(mappedView, &targetHandle, sizeof(targetHandle));
+//     UnmapViewOfFile(mappedView);
+//     return true;
+//   }
+//
+//   HANDLE deserialitzateHandle(string mappedFileName) {
+//     HANDLE mappedFile = NULL;
+//     LPVOID mappedView;
+//     mappedFile = OpenFileMappingA(FILE_MAP_WRITE, FALSE, mappedFileName.c_str());
+//     if (mappedFile == NULL) {
+//       cout << "Error opening the Mapped File";
+//       return mappedFile;
+//     }
+//
+//     mappedView = MapViewOfFile(mappedFile, FILE_MAP_WRITE, 0, 0, sizeof(mappedFile));
+//     if (mappedView == NULL) {
+//       cout << "Error creating the view";
+//       return mappedFile;
+//     }
+//
+//     HANDLE targetHandle;
+//     RtlMoveMemory(&targetHandle, mappedView, sizeof(mappedFile));
+//     UnmapViewOfFile(mappedView);
+//     return targetHandle;
+//   }
+//
+// };
+
+// From https://lackingrhoticity.blogspot.com/2015/05/passing-fds-handles-between-processes.html:
+// > On Unix, FD objects can be sent via sockets in messages. On Windows, handle objects cannot be sent in messages;
+//   only handle numbers can.
+// Windows fills this gap by allowing one process to read or modify another process's handle table synchronously using
+// the DuplicateHandle() API. Using this API involves one process dealing with another process's handle numbers.
+//
+// In contrast, Unix has no equivalent to DuplicateHandle(). A Unix process's FD table is private to the process.
+// Consequently, on Unix it is much rarer for a process to have dealings with another process's FD numbers.
+//
+// On Windows, to send a handle to another process, the sender will generally call two system calls:
+//  - Firstly, the sender must call DuplicateHandle() to copy the handle to the destination process. This requires the
+//    sender to have a process handle for the destination process. DuplicateHandle() will return a handle number
+//    indexing into the destination process's handle table.
+//  - Secondly, the sender must communicate the handle number to the destination process, e.g. by sending a message
+//    containing the number via a pipe using WriteFile().
+
 #elif __linux__
 std::string random_alphanumeric_string(std::size_t len)
 {
@@ -168,23 +260,97 @@ std::string extract_from_stdout_stream(FILE* stream)
   constexpr std::size_t BUFFER_SIZE = 128;
   buffer.resize(BUFFER_SIZE);
   std::string out{};
-  // TODO: "fread" blocks forever until stream returns EOF. I need to instead check if there's new data in the stream
-  // (using a timeout?) and return early otherwise.
-  // https://stackoverflow.com/questions/5616092/non-blocking-call-for-reading-descriptor
   for (auto bytes_read{fread(buffer.data(), sizeof(char), BUFFER_SIZE, stream)}; bytes_read > 0; bytes_read = fread(
          buffer.data(), sizeof(char), BUFFER_SIZE, stream))
     out.append(std::string_view{buffer.data(), bytes_read});
   return out;
 }
+
+// https://stackoverflow.com/questions/2358684/can-i-share-a-file-descriptor-to-another-process-on-linux-or-are-they-local-to-t
+ssize_t read_fd(int fd, void* ptr, size_t nbytes, int& recvfd)
+{
+  // #ifdef  HAVE_MSGHDR_MSG_CONTROL
+  // union {
+  //   struct cmsghdr    cm;
+  //   char              control[CMSG_SPACE(sizeof(int))];
+  // } control_un;
+  char control[CMSG_SPACE(sizeof(int))];
+  static_assert(sizeof(control) >= sizeof(cmsghdr));
+
+  iovec iov[1]
+  {
+    iovec{
+      .iov_base = ptr,
+      .iov_len = nbytes,
+    },
+  };
+  // msghdr msg;
+  // msg.msg_control = control;
+  // msg.msg_controllen = sizeof(control);
+  // // #else
+  // //     msg.msg_accrights = (caddr_t) &newfd;
+  // //     msg.msg_accrightslen = sizeof(int);
+  // // #endif
+  //
+  // msg.msg_name = nullptr;
+  // msg.msg_namelen = 0;
+  // msg.msg_iov = iov;
+  // msg.msg_iovlen = 1;
+
+  msghdr msg
+  {
+    .msg_name = nullptr,
+    .msg_namelen = 0,
+    .msg_iov = iov,
+    .msg_iovlen = 1,
+    .msg_control = control,
+    .msg_controllen = sizeof(control),
+  };
+
+  const auto bytes_received{recvmsg(fd, &msg, 0)};
+  if (bytes_received < 0)
+    return bytes_received;
+
+  // #ifdef  HAVE_MSGHDR_MSG_CONTROL
+  auto cmptr{CMSG_FIRSTHDR(&msg)};
+  if (cmptr == nullptr)
+    return -1;
+
+  cmptr->cmsg_len == CMSG_LEN(sizeof(int));
+  if (cmptr->cmsg_level != SOL_SOCKET)
+  {
+    std::cerr << "cmsg_level != SOL_SOCKET" << std::endl;
+    return -1;
+  }
+
+  if (cmptr->cmsg_type != SCM_RIGHTS)
+  {
+    std::cerr << "cmsg_type != SCM_RIGHTS" << std::endl;
+    return -1;
+  }
+
+  recvfd = *reinterpret_cast<int*>(CMSG_DATA(cmptr));
+
+  // #else
+  // /* *INDENT-OFF* */
+  //   if (msg.msg_accrightslen == sizeof(int))
+  //       recvfd = newfd;
+  //   else
+  //       recvfd = -1;       /* descriptor was not passed */
+  // /* *INDENT-ON* */
+  // #endif
+
+  return bytes_received;
+}
 #endif
 
-std::vector<ConnectionData> fetch_connection_data_from_child_pipe_output(std::string_view child_pipe_output)
+std::vector<ConnectionData> parse_connection_data_from_child_output(std::string_view child_output)
 {
   const static std::regex line_match{R"(Connection data: \{[^\}]+\})"};
   const static std::regex sub_match{R"(\"[a-zA-Z0-9_^\"]*\")"};
   std::vector<ConnectionData> data;
 
-  for (std::regex_iterator it{child_pipe_output.begin(), child_pipe_output.end(), line_match}; it != decltype(it){}; ++
+  for (std::regex_iterator it{child_output.begin(), child_output.end(), line_match}; it != decltype(it){}; ++
        it)
   {
     auto match{*it};
@@ -243,13 +409,13 @@ std::vector<ConnectionData> fetch_connection_data_from_child_pipe_output(std::st
   return data;
 }
 
-void print_child_pipe(std::string_view child_pipe_output)
+void print_child_pipe(std::string_view child_string_output)
 {
-  if (child_pipe_output.empty())
+  if (child_string_output.empty())
     return;
 
   std::cout << "Child process:" << std::endl;
-  for (auto line : child_pipe_output | std::views::split('\n') | std::views::transform([](auto&& subrange)
+  for (auto line : child_string_output | std::views::split('\n') | std::views::transform([](auto&& subrange)
   {
     return std::string_view{subrange.begin(), subrange.end()};
   }))
@@ -272,6 +438,10 @@ std::pair<Semaphore, Semaphore> create_semaphores_from_connection_data(
     if (data.handle_type != "OpaqueWin32")
       throw std::logic_error{"Handle type is not implemented"};
     glImportSemaphoreWin32HandleEXT(id, GL_HANDLE_TYPE_OPAQUE_WIN32_EXT, data.handle);
+#elif __linux__
+    if (data.handle_type != "OpaqueFd")
+      throw std::logic_error{"Handle type is not implemented"};
+    glImportSemaphoreFdEXT(id, GL_HANDLE_TYPE_OPAQUE_FD_EXT, data.handle);
 #endif
     semaphore = {id};
     if (!glIsSemaphoreEXT(semaphore.getId()))
@@ -296,6 +466,10 @@ std::unique_ptr<ExternalTexture> create_texture_from_connection_data(const std::
     if (data.handle_type != "OpaqueWin32")
       throw std::logic_error{"Handle type is not implemented"};
     glImportMemoryWin32HandleEXT(memory_id, *data.memory_allocation_size, GL_HANDLE_TYPE_OPAQUE_WIN32_EXT, data.handle);
+#elif __linux__
+    if (data.handle_type != "OpaqueFd")
+      throw std::logic_error{"Handle type is not implemented"};
+    glImportMemoryFdEXT(memory_id, *data.memory_allocation_size, GL_HANDLE_TYPE_OPAQUE_FD_EXT, data.handle);
 #endif
 
     glGenTextures(1, &texture_id);
@@ -351,11 +525,12 @@ int main()
     p_mat = glm::perspective(FOV, static_cast<float>(width) / static_cast<float>(height), 0.1f, 100.f);
   });
 
-  if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
-  {
-    std::cout << "Failed to initialize GLAD" << std::endl;
-    return -1;
-  }
+  // if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
+  // {
+  //   std::cout << "Failed to initialize GLAD" << std::endl;
+  //   return -1;
+  // }
+  glbinding::initialize(glfwGetProcAddress);
 
   const auto getGLString = [](GLenum type)
   {
@@ -365,12 +540,35 @@ int main()
   std::cout << std::format("Running OpenGL version {}, on a {}", getGLString(GL_VERSION), getGLString(GL_RENDERER)) <<
     std::endl;
 
-  if (glGenSemaphoresEXT == nullptr || glCreateMemoryObjectsEXT == nullptr)
+  std::unordered_set<std::string> supported_extensions;
+  GLint supported_extension_count;
+  glGetIntegerv(GL_NUM_EXTENSIONS, &supported_extension_count);
+  for (GLuint i{ 0 }; i < supported_extension_count; ++i)
+    supported_extensions.insert(std::string{ reinterpret_cast<const char*>(glGetStringi(GL_EXTENSIONS, i)) });
+
+  if (!supported_extensions.contains("GL_EXT_memory_object") || !supported_extensions.contains("GL_EXT_semaphore"))
   {
     std::cout << "Extension GL_EXT_memory_object or GL_EXT_semaphore is missing." << std::endl;
     glfwTerminate();
     return -1;
   }
+
+#ifdef _WIN32
+  if (!supported_extensions.contains("GL_EXT_memory_object_win32") || !supported_extensions.contains("GL_EXT_semaphore_win32"))
+  {
+    std::cout << "Extension GL_EXT_memory_object_win32 or GL_EXT_semaphore_win32 is missing." << std::endl;
+    glfwTerminate();
+    return -1;
+  }
+#elif __linux__
+  if (!supported_extensions.contains("GL_EXT_memory_object_fd") || !supported_extensions.contains("GL_EXT_semaphore_fd"))
+  {
+    std::cout << "Extension GL_EXT_memory_object_fd or GL_EXT_semaphore_fd is missing." << std::endl;
+    glfwTerminate();
+    return -1;
+  }
+#endif
+
 
   glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
   glDebugMessageCallback([](GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length,
@@ -406,7 +604,7 @@ int main()
     const auto msg = std::format("OpenGL: {{ source: {}, type: {}, severity: {}, message: {} }}", sources.at(source),
                                  types.at(type), severities.at(severity), msg_str);
     std::cout << msg << std::endl;
-    if (severity != GL_DEBUG_SEVERITY_NOTIFICATION && severity != GL_DEBUG_SEVERITY_LOW)
+    if (type != GL_DEBUG_TYPE_PERFORMANCE && severity != GL_DEBUG_SEVERITY_NOTIFICATION && severity != GL_DEBUG_SEVERITY_LOW)
       throw std::runtime_error{msg};
   }, nullptr);
 
@@ -432,9 +630,9 @@ int main()
 #elif __linux__
     // Create a temp path we will use for the socket connection
     std::error_code ec;
-    // 14 characters is probably enough to guarantee uniqueness
+    // 20 characters is probably enough to guarantee uniqueness
     const auto socket_addr_path{
-      std::filesystem::temp_directory_path(ec) / std::format("{}.sock", random_alphanumeric_string(14))
+      std::filesystem::temp_directory_path(ec) / std::format("{}.sock", random_alphanumeric_string(20))
     };
     assert(!ec); // We don't expect this to fail very often
 
@@ -514,7 +712,7 @@ int main()
       return 0;
     });
 
-    std::cout << "Waiting for connection data from child process..." << std::endl;
+    std::cout << "Waiting for child process..." << std::endl;
     int client_fd = accept(server_fd, nullptr, nullptr); // Blocks until a connection is made
     // After receiving an incoming connection, delete the address path to prevent other clients from connecting
     if (!std::filesystem::remove(socket_addr_path, ec))
@@ -524,34 +722,58 @@ int main()
       return -1;
     }
 
-    // Read some test data from child
-    {
-      std::string buffer;
-      constexpr std::size_t buffer_size{128};
-      buffer.resize(buffer_size);
-      ssize_t bytes_read{0};
-      for (bytes_read = read(client_fd, buffer.data(), buffer_size); bytes_read > 0; bytes_read = read(
-             client_fd, buffer.data(), buffer_size))
-      {
-        std::cout << std::format("Received data from client: \"{}\"",
-                                 std::string_view{buffer.data(), static_cast<std::size_t>(bytes_read)}) << std::endl;
-      }
+    std::cout << "Got a connection!" << std::endl;
 
-      if (bytes_read < 0)
+    // Read some test data from child
+    std::vector<ConnectionData> connection_data{};
+    {
+      std::array<char, 128> buffer{};
+      int file_fd{-1};
+      // Read a maximum of 3 connection data messages
+      for (unsigned int i{ 0 }; i < 3; ++i)
       {
-        std::cerr << std::format("Error received while trying to read from child process socket: {}", errno) <<
-          std::endl;
-        return -1;
+        const auto bytes_read{ read_fd(client_fd, buffer.data(), buffer.size(), file_fd) };
+        if (bytes_read == 0)
+          break;
+
+        if (bytes_read < 0)
+        {
+          // Special case: Client connection was interrupted. This is likely intentional, so just break out of the loop
+          if (fcntl(client_fd, F_GETFD) < 0)
+            break;
+          std::cerr << "Failed to receive socket message from child process. Error: " << errno << std::endl;
+          return -1;
+        }
+        if (file_fd < 0 || fcntl(file_fd, F_GETFD) < 0)
+        {
+          std::cerr << "File descriptor received from child process is invalid" << std::endl;
+          return -1;
+        }
+
+        const std::string_view formatted_message{buffer.data(), static_cast<std::size_t>(bytes_read)};
+        auto sub_connection_data{parse_connection_data_from_child_output(formatted_message)};
+        if (sub_connection_data.size() != 1)
+        {
+          std::cerr << "Unexpected amount of connection data received from child process" << std::endl;
+          return -1;
+        }
+
+
+        sub_connection_data.front().handle = file_fd;
+        file_fd = -1;
+        connection_data.push_back(std::move(sub_connection_data.front()));
+        std::cout << "Received connection data from the child process" << std::endl;
       }
     }
 
-    if (close(client_fd) < 0)
+    if (close(client_fd) < 0 || close(server_fd) < 0)
     {
       std::cerr << "Failed to close child process socket:" << errno << std::endl;
       return -1;
     }
 
-    return 0;
+    std::cout << "Closed the child process socket" << std::endl;
+
 
     // Set fd to be non-blocking
     // if (fcntl(child_process_fd, F_SETFL, fcntl(child_process_fd, F_GETFL, 0) | O_NONBLOCK) < 0)
@@ -563,7 +785,7 @@ int main()
 
 #endif
 
-    std::vector<ConnectionData> connection_data{};
+    // std::vector<ConnectionData> connection_data{};
     // for (unsigned int attempts { 0u }; attempts < 10u && connection_data.empty(); ++attempts) {
     //   // Note: child_output_channel is platform dependent but in all platforms represents some sort of "channel",
     //   // i.e. a directional data stream from the child process to the parent process. On Windows this is a pipe,

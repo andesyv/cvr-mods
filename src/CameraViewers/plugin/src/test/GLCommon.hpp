@@ -1,6 +1,8 @@
 #include <optional>
 
-#include <glad/glad.h>
+// #include <glad/glad.h>
+#include <glbinding/gl45core/gl.h>
+using namespace gl;
 
 constexpr std::size_t WIDTH = 800;
 constexpr std::size_t HEIGHT = 600;

@@ -9,6 +9,7 @@ use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, NamedKey};
 use winit::window::WindowId;
+use crate::platform::OwnerChannel;
 
 pub struct Window {
     close_requested: bool,
@@ -16,6 +17,7 @@ pub struct Window {
     context: Option<RenderContext>,
     app_timer: Instant,
     first_frame: bool,
+    pub channel: Option<OwnerChannel>,
 }
 
 impl Default for Window {
@@ -26,6 +28,7 @@ impl Default for Window {
             context: None,
             app_timer: Instant::now(),
             first_frame: true,
+            channel: None,
         }
     }
 }
@@ -41,7 +44,7 @@ impl ApplicationHandler for Window {
                 .expect("Failed to create window"),
         );
         self.inner_window = Some(window.clone());
-        self.context = Some(RenderContext::new(event_loop, window, [WIDTH, HEIGHT]));
+        self.context = Some(RenderContext::new(event_loop, window, [WIDTH, HEIGHT], std::mem::take(&mut self.channel)));
         if cfg!(debug_assertions) {
             println!(
                 "Setup took {} milliseconds to complete",
@@ -92,7 +95,7 @@ impl ApplicationHandler for Window {
             // We want to give the parent process a bit of initial time to finish setup, so we wait
             // a bit before rendering the first frame.
             if self.first_frame {
-                assert!(self.context.as_ref().unwrap().memory_exporter.is_valid());
+                assert!(self.context.as_ref().unwrap().memory_exporter.as_ref().unwrap().is_valid());
                 std::thread::sleep(Duration::from_secs(30));
                 self.first_frame = false;
             }

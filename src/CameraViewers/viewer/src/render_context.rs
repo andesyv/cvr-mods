@@ -1,6 +1,6 @@
 use crate::create_external_semaphore;
 use crate::external_image::ExternalImage;
-use crate::platform::{get_external_memory_type, get_external_semaphore_type, MemoryExporter};
+use crate::platform::{get_external_memory_type, get_external_semaphore_type, MemoryExporter, OwnerChannel};
 use cgmath::{Deg, Matrix4, PerspectiveFov, Point3, Vector3};
 use std::sync::Arc;
 use std::time::Duration;
@@ -324,11 +324,11 @@ pub struct RenderContext {
     swapchain: Arc<Swapchain>,
     swapchain_fences: Vec<Option<Box<dyn GpuFuture>>>,
     // Has to be kept alive but will never be used
-    pub(crate) memory_exporter: MemoryExporter,
+    pub(crate) memory_exporter: Option<MemoryExporter>,
 }
 
 impl RenderContext {
-    pub fn new(event_loop: &ActiveEventLoop, window: Arc<Window>, dimensions: [u32; 2]) -> Self {
+    pub fn new(event_loop: &ActiveEventLoop, window: Arc<Window>, dimensions: [u32; 2], owner_channel: Option<OwnerChannel>) -> Self {
         let instance = create_instance(event_loop);
         let api_version = instance.api_version();
         // let _debug_messenger = unsafe { window::create_debug_messenger(&instance) };
@@ -381,9 +381,11 @@ impl RenderContext {
         let vk_end_sem =
             create_external_semaphore(device.clone(), semaphore_handle_type.into()).unwrap();
 
-        let mut memory_exporter = MemoryExporter::default();
-        memory_exporter.export_semaphore_to_owner_process("OGL_begin", &vk_end_sem, semaphore_handle_type);
-        memory_exporter.export_semaphore_to_owner_process("OGL_end", &vk_begin_sem, semaphore_handle_type);
+        let mut memory_exporter = owner_channel.map(MemoryExporter::from_channel);
+        if let Some(exporter) = memory_exporter.as_mut() {
+            exporter.export_semaphore_to_owner_process("OGL_begin", &vk_end_sem, semaphore_handle_type);
+            exporter.export_semaphore_to_owner_process("OGL_end", &vk_begin_sem, semaphore_handle_type);
+        }
 
         // TODO: Make a version that works on Windows (POSIX file descriptor handles only works on Unix)
         let image = ExternalImage::new(
@@ -394,7 +396,14 @@ impl RenderContext {
         )
         .unwrap();
 
-        memory_exporter.export_memory_to_owner_process("OGL_buffer", &image, memory_handle_type);
+
+        if let Some(exporter) = memory_exporter.as_mut() {
+            exporter.export_memory_to_owner_process("OGL_buffer", &image, memory_handle_type);
+            // After this we don't need the channel, so clear it.
+            exporter.channel = None;
+            // TODO: If we freeze the program here for a reasonable time, we don't have to pass the
+            // MemoryExporter along as the host-process will already have imported the memory.
+        }
 
         // let image_view = image.try_into().unwrap();
 
@@ -539,7 +548,7 @@ impl RenderContext {
         ));
 
         if cfg!(unix) {
-            assert!(memory_exporter.is_valid(), "Memory is no longer valid");
+            assert!(memory_exporter.as_ref().unwrap().is_valid(), "Memory is no longer valid");
         }
 
         Self {

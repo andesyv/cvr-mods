@@ -11,6 +11,7 @@ use crate::window::Window;
 use vulkano::sync::semaphore::{ExternalSemaphoreHandleTypes, Semaphore, SemaphoreCreateInfo};
 use vulkano::{Validated, VulkanError, device::Device};
 use winit::event_loop::EventLoop;
+use crate::platform::OwnerChannel;
 
 mod external_image;
 mod platform;
@@ -36,27 +37,27 @@ fn create_external_semaphore(
 const WIDTH: u32 = 800;
 const HEIGHT: u32 = 600;
 
+#[cfg(unix)]
+fn find_channel_from_args(args: &[String]) -> Option<OwnerChannel> {
+    if let Some(possible_socket_path) = args.get(1) {
+        let socket_path = Path::new(possible_socket_path);
+        if socket_path.extension().map(|e| e == "sock").unwrap_or(false) && socket_path.exists() {
+            println!("Using passed socket {}", possible_socket_path);
+            return Some(OwnerChannel::new(socket_path).expect("Failed to connect to socket"));
+        }
+    }
+    None
+}
+
 fn main() {
     println!("Hello, viewer!");
 
-    if cfg!(unix) {
-        let args: Vec<_> = args().collect();
-        if let Some(possible_socket_path) = args.get(1) {
-            println!("Possible socket: {}", possible_socket_path);
-            let socket_path = Path::new(possible_socket_path);
-            if socket_path.extension().map(|e| e == "sock").unwrap_or(false) && socket_path.exists() {
-                println!("Using socket mode!");
-
-                let mut stream = UnixStream::connect(socket_path).expect("Failed to connect to socket");
-                stream.write(b"Hello from child!").unwrap();
-                stream.recv_vectored_with_ancillary()
-                return;
-            }
-        }
-    }
+    let args: Vec<_> = args().collect();
+    let channel = find_channel_from_args(&args[..]);
 
     let event_loop = EventLoop::new().unwrap();
     let mut window = Window::default();
+    window.channel = channel;
     event_loop.run_app(&mut window).unwrap();
 }
 

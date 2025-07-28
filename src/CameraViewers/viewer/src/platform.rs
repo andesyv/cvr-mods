@@ -1,4 +1,7 @@
+use std::io::IoSlice;
 use std::os::fd::AsRawFd;
+use std::os::unix::net::{SocketAncillary, UnixStream};
+use std::path::Path;
 use crate::external_image::ExternalImage;
 use std::sync::Arc;
 use vulkano::image::Image;
@@ -34,12 +37,14 @@ enum MemoryOwnerObject {
 // Stores managed IPC handles.
 // On unix: This stores Fd file handles, which need to be kept alive, hence this object
 // On Windows: This stores native Win32 handles, which are managed by the OS and not us (I hope)
-#[derive(Default)]
+// #[derive(Default)]
 pub struct MemoryExporter {
     #[cfg(unix)]
     handles: Vec<NativeManagedHandle>,
     #[cfg(unix)]
     owner_objects: Vec<MemoryOwnerObject>,
+    #[cfg(unix)]
+    pub(crate) channel: Option<OwnerChannel>,
 }
 
 impl MemoryExporter {
@@ -55,6 +60,14 @@ impl MemoryExporter {
     #[cfg(windows)]
     pub fn is_valid(&self) -> bool {
         true
+    }
+
+    pub fn from_channel(channel: OwnerChannel) -> MemoryExporter {
+        MemoryExporter {
+            handles: Default::default(),
+            owner_objects: Default::default(),
+            channel: Some(channel),
+        }
     }
 }
 
@@ -128,34 +141,34 @@ fn format_handle(handle: &NativeManagedHandle) -> String {
     format!("{}", handle.as_raw_fd())
 }
 
-fn print_semaphore_handle(identifier: &str, handle: &NativeManagedHandle) {
+fn format_semaphore_handle(identifier: &str, handle: &NativeManagedHandle) -> String {
     const HANDLE_TYPE: &'static str = if cfg!(windows) {
         "OpaqueWin32"
     } else {
         "OpaqueFd"
     };
-    println!(
+    format!(
         "Connection data: {{\"semaphore\", \"{}\", handle type: \"{}\", \"{}\"}}",
         identifier,
         HANDLE_TYPE,
         format_handle(handle)
-    );
+    )
 }
 
-fn print_memory_handle(identifier: &str, image: &ExternalImage, handle: &NativeManagedHandle) {
+fn format_memory_handle(identifier: &str, image: &ExternalImage, handle: &NativeManagedHandle) -> String {
     const HANDLE_TYPE: &'static str = if cfg!(windows) {
         "OpaqueWin32"
     } else {
         "OpaqueFd"
     };
-    println!(
+    format!(
         "Connection data: {{\"image\", \"{}\", handle type: \"{}\", \"{}\", size: \"{}\", format: \"{:?}\" }}",
         identifier,
         HANDLE_TYPE,
         format_handle(handle),
         image.device_memory_allocation_size(),
         image.format()
-    );
+    )
 }
 
 #[cfg(windows)]
@@ -241,7 +254,7 @@ impl MemoryExporter {
         let exported_handle = WinHandle(semaphore.export_win32_handle(handle_type).unwrap() as *mut std::ffi::c_void);
         unsafe {
             let new_handle = create_owner_process_accessible_memory_handle(&exported_handle);
-            print_semaphore_handle(identifier, &new_handle);
+            format_semaphore_handle(identifier, &new_handle);
         };
     }
 
@@ -264,7 +277,7 @@ impl MemoryExporter {
                 .export_fd(handle_type)
                 .map_err(Validated::unwrap)
                 .unwrap();
-            print_semaphore_handle(identifier, &file);
+            self.channel.as_ref().unwrap().send(&format_semaphore_handle(identifier, &file), &file);
             self.handles.push(file);
         }
 
@@ -287,7 +300,7 @@ impl MemoryExporter {
         let exported_handle = image.export().unwrap();
         unsafe {
             let new_handle = create_owner_process_accessible_memory_handle(&exported_handle);
-            print_memory_handle(identifier, image, &new_handle);
+            format_memory_handle(identifier, image, &new_handle);
         };
     }
 
@@ -306,9 +319,30 @@ impl MemoryExporter {
             .push(MemoryOwnerObject::Image(image.into()));
 
         let file = image.export().unwrap();
-        print_memory_handle(identifier, image, &file);
+        self.channel.as_ref().unwrap().send(&format_memory_handle(identifier, image, &file), &file);
         self.handles.push(file);
+    }
+}
 
-        // TODO: In owner-process, use pidfd_getfd to duplicate (steal) the handle
+#[cfg(windows)]
+pub struct OwnerChannel;
+#[cfg(unix)]
+pub struct OwnerChannel {
+    stream: UnixStream,
+}
+
+impl OwnerChannel {
+    pub fn new(socket_path: &Path) -> std::io::Result<OwnerChannel> {
+        let stream = UnixStream::connect(socket_path)?;
+        Ok(OwnerChannel { stream })
+    }
+
+    #[cfg(unix)]
+    pub fn send(&self, msg: &str, handle: &NativeManagedHandle) {
+        let mut ancillary_buffer = [0; 128];
+        let mut ancillary = SocketAncillary::new(&mut ancillary_buffer[..]);
+        ancillary.add_fds(&[handle.as_raw_fd()][..]);
+        let io_slice_path = IoSlice::new(msg.as_bytes());
+        self.stream.send_vectored_with_ancillary(&[io_slice_path][..], &mut ancillary).unwrap();
     }
 }
