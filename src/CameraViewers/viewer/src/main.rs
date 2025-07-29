@@ -1,17 +1,15 @@
 #![feature(unix_socket_ancillary_data)]
 
 use std::env::args;
-use std::io::Write;
-use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::platform::IPCChannel;
 // use platform::get_allowed_external_semaphore_handle_types;
 use crate::window::Window;
 use vulkano::sync::semaphore::{ExternalSemaphoreHandleTypes, Semaphore, SemaphoreCreateInfo};
 use vulkano::{Validated, VulkanError, device::Device};
 use winit::event_loop::EventLoop;
-use crate::platform::OwnerChannel;
 
 mod external_image;
 mod platform;
@@ -38,12 +36,17 @@ const WIDTH: u32 = 800;
 const HEIGHT: u32 = 600;
 
 #[cfg(unix)]
-fn find_channel_from_args(args: &[String]) -> Option<OwnerChannel> {
+fn find_channel_from_args(args: &[String]) -> Option<IPCChannel> {
     if let Some(possible_socket_path) = args.get(1) {
         let socket_path = Path::new(possible_socket_path);
-        if socket_path.extension().map(|e| e == "sock").unwrap_or(false) && socket_path.exists() {
+        if socket_path
+            .extension()
+            .map(|e| e == "sock")
+            .unwrap_or(false)
+            && socket_path.exists()
+        {
             println!("Using passed socket {}", possible_socket_path);
-            return Some(OwnerChannel::new(socket_path).expect("Failed to connect to socket"));
+            return Some(IPCChannel::new(socket_path).expect("Failed to connect to socket"));
         }
     }
     None

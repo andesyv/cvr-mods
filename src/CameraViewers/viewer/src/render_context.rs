@@ -1,12 +1,15 @@
 use crate::create_external_semaphore;
 use crate::external_image::ExternalImage;
-use crate::platform::{get_external_memory_type, get_external_semaphore_type, MemoryExporter, OwnerChannel};
+use crate::platform::{MemoryExporter, IPCChannel, get_external_memory_type, get_external_semaphore_type, IPCSemaphore};
 use cgmath::{Deg, Matrix4, PerspectiveFov, Point3, Vector3};
 use std::sync::Arc;
 use std::time::Duration;
 use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer};
 use vulkano::command_buffer::allocator::{CommandBufferAllocator, StandardCommandBufferAllocator};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, RenderPassBeginInfo};
+use vulkano::command_buffer::{
+    AutoCommandBufferBuilder, CommandBufferUsage, RenderPassBeginInfo, SemaphoreSubmitInfo,
+    SubmitInfo,
+};
 use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
 use vulkano::device::{
     Device, DeviceCreateInfo, DeviceExtensions, Queue, QueueCreateInfo, QueueFlags,
@@ -27,6 +30,7 @@ use vulkano::pipeline::{
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass};
 use vulkano::swapchain::{Surface, Swapchain, SwapchainCreateInfo, acquire_next_image};
 use vulkano::sync::GpuFuture;
+use vulkano::sync::semaphore::Semaphore;
 use vulkano::{Validated, VulkanLibrary};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::Window;
@@ -323,12 +327,19 @@ pub struct RenderContext {
     framebuffers: Vec<Arc<Framebuffer>>,
     swapchain: Arc<Swapchain>,
     swapchain_fences: Vec<Option<Box<dyn GpuFuture>>>,
-    // Has to be kept alive but will never be used
-    pub(crate) memory_exporter: Option<MemoryExporter>,
+    begin_sem: Arc<Semaphore>,
+    end_sem: Arc<Semaphore>,
+    shared_image: ExternalImage,
+    host_process_semaphore: Option<IPCSemaphore>,
 }
 
 impl RenderContext {
-    pub fn new(event_loop: &ActiveEventLoop, window: Arc<Window>, dimensions: [u32; 2], owner_channel: Option<OwnerChannel>) -> Self {
+    pub fn new(
+        event_loop: &ActiveEventLoop,
+        window: Arc<Window>,
+        dimensions: [u32; 2],
+        owner_channel: Option<IPCChannel>,
+    ) -> Self {
         let instance = create_instance(event_loop);
         let api_version = instance.api_version();
         // let _debug_messenger = unsafe { window::create_debug_messenger(&instance) };
@@ -376,19 +387,12 @@ impl RenderContext {
         )
         .unwrap();
 
-        let vk_begin_sem =
+        let begin_sem =
             create_external_semaphore(device.clone(), semaphore_handle_type.into()).unwrap();
-        let vk_end_sem =
+        let end_sem =
             create_external_semaphore(device.clone(), semaphore_handle_type.into()).unwrap();
 
-        let mut memory_exporter = owner_channel.map(MemoryExporter::from_channel);
-        if let Some(exporter) = memory_exporter.as_mut() {
-            exporter.export_semaphore_to_owner_process("OGL_begin", &vk_end_sem, semaphore_handle_type);
-            exporter.export_semaphore_to_owner_process("OGL_end", &vk_begin_sem, semaphore_handle_type);
-        }
-
-        // TODO: Make a version that works on Windows (POSIX file descriptor handles only works on Unix)
-        let image = ExternalImage::new(
+        let shared_image = ExternalImage::new(
             device.clone(),
             &memory_allocator,
             dimensions,
@@ -396,14 +400,27 @@ impl RenderContext {
         )
         .unwrap();
 
-
-        if let Some(exporter) = memory_exporter.as_mut() {
-            exporter.export_memory_to_owner_process("OGL_buffer", &image, memory_handle_type);
-            // After this we don't need the channel, so clear it.
-            exporter.channel = None;
-            // TODO: If we freeze the program here for a reasonable time, we don't have to pass the
-            // MemoryExporter along as the host-process will already have imported the memory.
-        }
+        let host_process_semaphore = owner_channel.map(|channel|{
+            let mut memory_exporter = MemoryExporter::from_channel(channel);
+            // The host (OGL) takes ownership of the image as soon as we're done with using it,
+            // signalled by end_sem. Therefore, VK end = OGL begin and OGL end = VK begin
+            memory_exporter.export_semaphore_to_owner_process(
+                "host_begin_sem",
+                &end_sem,
+                semaphore_handle_type,
+            );
+            memory_exporter.export_semaphore_to_owner_process(
+                "host_end_sem",
+                &begin_sem,
+                semaphore_handle_type,
+            );
+            memory_exporter.export_memory_to_owner_process(
+                "shared_image",
+                &shared_image,
+                memory_handle_type,
+            );
+            memory_exporter.flush_and_transform_to_semaphore()
+        });
 
         // let image_view = image.try_into().unwrap();
 
@@ -547,10 +564,6 @@ impl RenderContext {
             Default::default(),
         ));
 
-        if cfg!(unix) {
-            assert!(memory_exporter.as_ref().unwrap().is_valid(), "Memory is no longer valid");
-        }
-
         Self {
             pipeline,
             command_buffer_allocator,
@@ -559,7 +572,10 @@ impl RenderContext {
             framebuffers,
             swapchain,
             swapchain_fences: Vec::new(),
-            memory_exporter: memory_exporter,
+            begin_sem,
+            end_sem,
+            shared_image,
+            host_process_semaphore,
         }
 
         //
@@ -756,6 +772,44 @@ impl RenderContext {
     }
 
     pub fn draw(&mut self, time: f32) {
+
+        if let Some(semaphore) = self.host_process_semaphore.as_mut() {
+            self.queue
+                .with(|mut q| unsafe {
+                    q.submit_unchecked(
+                        &[SubmitInfo {
+                            signal_semaphores: vec![SemaphoreSubmitInfo::new(self.end_sem.clone())],
+                            ..Default::default()
+                        }],
+                        None,
+                    )
+                })
+                .unwrap();
+
+            // As both the host and the client process make use of the same graphics device,
+            // the graphics queue will be intermingled with commands from both processes.
+            // In order for the semaphore order logic to be correct, we therefore need to ensure the
+            // processes are sequentially drawing frames one after another. That way both processes
+            // submit graphics commands which will end up in the expected order on the graphics
+            // device.
+            println!("Client done rendering");
+            semaphore.signal();
+            semaphore.wait();
+            println!("Client started rendering");
+
+            self.queue
+                .with(|mut q| unsafe {
+                    q.submit_unchecked(
+                        &[SubmitInfo {
+                            wait_semaphores: vec![SemaphoreSubmitInfo::new(self.begin_sem.clone())],
+                            ..Default::default()
+                        }],
+                        None,
+                    )
+                })
+                .unwrap();
+        }
+
         let mut builder = AutoCommandBufferBuilder::primary(
             self.command_buffer_allocator.clone(),
             self.queue.queue_family_index(),
@@ -765,7 +819,7 @@ impl RenderContext {
         .unwrap();
 
         let (image_index, framebuffer_suboptimal, acquire_future) =
-            acquire_next_image(self.swapchain.clone(), Some(Duration::from_millis(20)))
+            acquire_next_image(self.swapchain.clone(), Some(Duration::from_secs(1)))
                 .map_err(Validated::unwrap)
                 .unwrap();
 

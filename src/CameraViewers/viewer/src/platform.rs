@@ -1,4 +1,4 @@
-use std::io::IoSlice;
+use std::io::{IoSlice, Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::{SocketAncillary, UnixStream};
 use std::path::Path;
@@ -44,30 +44,24 @@ pub struct MemoryExporter {
     #[cfg(unix)]
     owner_objects: Vec<MemoryOwnerObject>,
     #[cfg(unix)]
-    pub(crate) channel: Option<OwnerChannel>,
+    channel: IPCChannel,
 }
 
 impl MemoryExporter {
-    #[cfg(unix)]
-    pub fn is_valid(&self) -> bool {
-        for handle in self.handles.iter() {
-            if unsafe { libc::fcntl(handle.as_raw_fd(), libc::F_GETFD) } < 0 {
-                return false;
-            }
-        }
-        true
-    }
-    #[cfg(windows)]
-    pub fn is_valid(&self) -> bool {
-        true
-    }
-
-    pub fn from_channel(channel: OwnerChannel) -> MemoryExporter {
+    pub fn from_channel(channel: IPCChannel) -> MemoryExporter {
         MemoryExporter {
             handles: Default::default(),
             owner_objects: Default::default(),
-            channel: Some(channel),
+            channel,
         }
+    }
+
+    // Consumes the MemoryExporter by converting the channel to a semaphore, which also blocks the
+    // thread until the receiver signals back that the memory has been successfully received.
+    pub fn flush_and_transform_to_semaphore(self) -> IPCSemaphore {
+        let mut semaphore = self.channel.finish_data_stream();
+        semaphore.wait();
+        semaphore
     }
 }
 
@@ -277,7 +271,7 @@ impl MemoryExporter {
                 .export_fd(handle_type)
                 .map_err(Validated::unwrap)
                 .unwrap();
-            self.channel.as_ref().unwrap().send(&format_semaphore_handle(identifier, &file), &file);
+            self.channel.send(&format_semaphore_handle(identifier, &file), &file);
             self.handles.push(file);
         }
 
@@ -319,22 +313,23 @@ impl MemoryExporter {
             .push(MemoryOwnerObject::Image(image.into()));
 
         let file = image.export().unwrap();
-        self.channel.as_ref().unwrap().send(&format_memory_handle(identifier, image, &file), &file);
+        self.channel.send(&format_memory_handle(identifier, image, &file), &file);
         self.handles.push(file);
     }
 }
 
-#[cfg(windows)]
-pub struct OwnerChannel;
-#[cfg(unix)]
-pub struct OwnerChannel {
+// This is an interprocess-communication directional channel (with platform dependent
+// implementation)
+pub struct IPCChannel {
+    #[cfg(unix)]
     stream: UnixStream,
 }
 
-impl OwnerChannel {
-    pub fn new(socket_path: &Path) -> std::io::Result<OwnerChannel> {
+impl IPCChannel {
+    #[cfg(unix)]
+    pub fn new(socket_path: &Path) -> std::io::Result<IPCChannel> {
         let stream = UnixStream::connect(socket_path)?;
-        Ok(OwnerChannel { stream })
+        Ok(IPCChannel { stream })
     }
 
     #[cfg(unix)]
@@ -344,5 +339,39 @@ impl OwnerChannel {
         ancillary.add_fds(&[handle.as_raw_fd()][..]);
         let io_slice_path = IoSlice::new(msg.as_bytes());
         self.stream.send_vectored_with_ancillary(&[io_slice_path][..], &mut ancillary).unwrap();
+    }
+
+    #[cfg(unix)]
+    pub fn finish_data_stream(self) -> IPCSemaphore
+    {
+        IPCSemaphore::from_stream(self.stream)
+    }
+}
+
+// This is a uni-directional interprocess communication semaphore (with platform dependent
+// implementations)
+pub struct IPCSemaphore {
+    #[cfg(unix)]
+    stream: UnixStream,
+}
+
+impl IPCSemaphore {
+    #[cfg(unix)]
+    pub fn from_stream(stream: UnixStream) -> IPCSemaphore {
+        // When stream is used as a semaphore, it's critical that any read blocks until data has
+        // been received.
+        stream.set_nonblocking(false).unwrap();
+        IPCSemaphore { stream }
+    }
+
+    #[cfg(unix)]
+    pub fn wait(&mut self) {
+        let mut tmp = [0; 10];
+        self.stream.read(&mut tmp).unwrap();
+    }
+
+    #[cfg(unix)]
+    pub fn signal(&mut self) {
+        self.stream.write(&[0]).unwrap();
     }
 }

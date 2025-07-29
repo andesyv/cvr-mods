@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::platform::IPCChannel;
 use crate::render_context::RenderContext;
 use crate::{HEIGHT, WIDTH};
 use winit::application::ApplicationHandler;
@@ -9,7 +10,6 @@ use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, NamedKey};
 use winit::window::WindowId;
-use crate::platform::OwnerChannel;
 
 pub struct Window {
     close_requested: bool,
@@ -17,7 +17,7 @@ pub struct Window {
     context: Option<RenderContext>,
     app_timer: Instant,
     first_frame: bool,
-    pub channel: Option<OwnerChannel>,
+    pub channel: Option<IPCChannel>,
 }
 
 impl Default for Window {
@@ -44,7 +44,12 @@ impl ApplicationHandler for Window {
                 .expect("Failed to create window"),
         );
         self.inner_window = Some(window.clone());
-        self.context = Some(RenderContext::new(event_loop, window, [WIDTH, HEIGHT], std::mem::take(&mut self.channel)));
+        self.context = Some(RenderContext::new(
+            event_loop,
+            window,
+            [WIDTH, HEIGHT],
+            std::mem::take(&mut self.channel),
+        ));
         if cfg!(debug_assertions) {
             println!(
                 "Setup took {} milliseconds to complete",
@@ -76,10 +81,12 @@ impl ApplicationHandler for Window {
                 _ => (),
             },
             WindowEvent::RedrawRequested => {
-                self.context
-                    .as_mut()
-                    .unwrap()
-                    .draw(self.app_timer.elapsed().as_secs_f32());
+                let PhysicalSize { width, height } =
+                    self.inner_window.as_ref().unwrap().inner_size();
+                if width != 0 && height != 0 {
+                    let t = self.app_timer.elapsed().as_secs_f32();
+                    self.context.as_mut().unwrap().draw(t);
+                }
             }
             // WindowEvent::Resized(_) => {
             //
@@ -94,11 +101,10 @@ impl ApplicationHandler for Window {
         } else {
             // We want to give the parent process a bit of initial time to finish setup, so we wait
             // a bit before rendering the first frame.
-            if self.first_frame {
-                assert!(self.context.as_ref().unwrap().memory_exporter.as_ref().unwrap().is_valid());
-                std::thread::sleep(Duration::from_secs(30));
-                self.first_frame = false;
-            }
+            // if self.first_frame {
+            //     std::thread::sleep(Duration::from_secs(30));
+            //     self.first_frame = false;
+            // }
             self.inner_window.as_ref().unwrap().request_redraw();
         }
     }

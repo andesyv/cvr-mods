@@ -55,6 +55,84 @@ struct ConnectionData
   std::optional<std::string> memory_image_format;
 };
 
+std::vector<ConnectionData> parse_connection_data_from_child_output(std::string_view child_output)
+{
+  const static std::regex line_match{R"(Connection data: \{[^\}]+\})"};
+  const static std::regex sub_match{R"(\"[a-zA-Z0-9_^\"]*\")"};
+  std::vector<ConnectionData> data;
+
+  for (std::regex_iterator it{child_output.begin(), child_output.end(), line_match}; it != decltype(it){}; ++
+       it)
+  {
+    auto match{*it};
+    const auto sub_str{match.str()};
+
+    std::regex_iterator sub_match_it{sub_str.begin(), sub_str.end(), sub_match};
+    const auto sub_matches = std::ranges::subrange{sub_match_it, decltype(sub_match_it){}} | std::views::transform(
+      [](auto match)
+      {
+        std::string s{match.str()};
+        return s.substr(1, s.size() - 2);
+      }) | std::ranges::to<std::vector<std::string>>();
+
+#ifdef _WIN32
+    static_assert(8 == sizeof(HANDLE), "Program requires 64 bit pointer types");
+    static_assert(8 == sizeof(unsigned long long));
+
+    const auto mem_address{ std::stoull(sub_matches.at(3), nullptr, 16) };
+    if (mem_address <= 0)
+      continue;
+
+    HANDLE handle{ reinterpret_cast<HANDLE>(mem_address) };
+
+    unsigned long handle_info{0u};
+    if (GetHandleInformation(handle, &handle_info) == 0) {
+      LPTSTR error_msg{ nullptr };
+      if (FormatMessage(
+        FORMAT_MESSAGE_ALLOCATE_BUFFER |
+        FORMAT_MESSAGE_FROM_SYSTEM |
+        FORMAT_MESSAGE_IGNORE_INSERTS,
+        NULL,
+        GetLastError(),
+        MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+        (LPTSTR) &error_msg,
+        0, NULL) == 0)
+          throw std::runtime_error{ std::format("Ironically, fetching the error string failed with error code {:x}", GetLastError()) };
+
+      throw std::runtime_error{ std::format("Handle is invalid. Error: {}", error_msg) };
+    }
+#elif __linux__
+    const int handle = std::stoi(sub_matches.at(3));
+#endif
+
+    data.push_back(ConnectionData{
+      .type = sub_matches.at(0) == "semaphore" ? ConnectionData::Type::Semaphore : ConnectionData::Type::Image,
+      .identifier = sub_matches.at(1),
+      .handle = handle,
+      .handle_type = sub_matches.at(2),
+      .memory_allocation_size = 4 < sub_matches.size()
+                                  ? std::make_optional<std::size_t>(std::stoull(sub_matches.at(4)))
+                                  : std::nullopt,
+      .memory_image_format = 5 < sub_matches.size() ? std::make_optional(sub_matches.at(5)) : std::nullopt,
+    });
+  }
+
+  return data;
+}
+
+void print_child_pipe(std::string_view child_string_output)
+{
+  if (child_string_output.empty())
+    return;
+
+  std::cout << "Child process:" << std::endl;
+  for (auto line : child_string_output | std::views::split('\n') | std::views::transform([](auto&& subrange)
+  {
+    return std::string_view{subrange.begin(), subrange.end()};
+  }))
+    std::cout << "\t\t" << line << std::endl;
+}
+
 #ifdef _WIN32
 std::pair<std::shared_ptr<HANDLE>, std::shared_ptr<HANDLE>> create_pipe() {
   SECURITY_ATTRIBUTES security_attributes {
@@ -342,85 +420,226 @@ ssize_t read_fd(int fd, void* ptr, size_t nbytes, int& recvfd)
 
   return bytes_received;
 }
-#endif
 
-std::vector<ConnectionData> parse_connection_data_from_child_output(std::string_view child_output)
+class IPCSemaphore
 {
-  const static std::regex line_match{R"(Connection data: \{[^\}]+\})"};
-  const static std::regex sub_match{R"(\"[a-zA-Z0-9_^\"]*\")"};
-  std::vector<ConnectionData> data;
+private:
+  int server_fd{ -1 };
+  int client_fd{ -1 };
+  std::array<char, 10> dummy_buffer{};
 
-  for (std::regex_iterator it{child_output.begin(), child_output.end(), line_match}; it != decltype(it){}; ++
-       it)
+public:
+  IPCSemaphore() = default;
+  IPCSemaphore(const IPCSemaphore&) = delete;
+  IPCSemaphore(IPCSemaphore&& rhs) noexcept
   {
-    auto match{*it};
-    const auto sub_str{match.str()};
-
-    std::regex_iterator sub_match_it{sub_str.begin(), sub_str.end(), sub_match};
-    const auto sub_matches = std::ranges::subrange{sub_match_it, decltype(sub_match_it){}} | std::views::transform(
-      [](auto match)
-      {
-        std::string s{match.str()};
-        return s.substr(1, s.size() - 2);
-      }) | std::ranges::to<std::vector<std::string>>();
-
-#ifdef _WIN32
-    static_assert(8 == sizeof(HANDLE), "Program requires 64 bit pointer types");
-    static_assert(8 == sizeof(unsigned long long));
-
-    const auto mem_address{ std::stoull(sub_matches.at(3), nullptr, 16) };
-    if (mem_address <= 0)
-      continue;
-
-    HANDLE handle{ reinterpret_cast<HANDLE>(mem_address) };
-
-    unsigned long handle_info{0u};
-    if (GetHandleInformation(handle, &handle_info) == 0) {
-      LPTSTR error_msg{ nullptr };
-      if (FormatMessage(
-        FORMAT_MESSAGE_ALLOCATE_BUFFER |
-        FORMAT_MESSAGE_FROM_SYSTEM |
-        FORMAT_MESSAGE_IGNORE_INSERTS,
-        NULL,
-        GetLastError(),
-        MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-        (LPTSTR) &error_msg,
-        0, NULL) == 0)
-          throw std::runtime_error{ std::format("Ironically, fetching the error string failed with error code {:x}", GetLastError()) };
-
-      throw std::runtime_error{ std::format("Handle is invalid. Error: {}", error_msg) };
-    }
-#elif __linux__
-    const int handle = std::stoi(sub_matches.at(3));
-#endif
-
-    data.push_back(ConnectionData{
-      .type = sub_matches.at(0) == "semaphore" ? ConnectionData::Type::Semaphore : ConnectionData::Type::Image,
-      .identifier = sub_matches.at(1),
-      .handle = handle,
-      .handle_type = sub_matches.at(2),
-      .memory_allocation_size = 4 < sub_matches.size()
-                                  ? std::make_optional<std::size_t>(std::stoull(sub_matches.at(4)))
-                                  : std::nullopt,
-      .memory_image_format = 5 < sub_matches.size() ? std::make_optional(sub_matches.at(5)) : std::nullopt,
-    });
+    std::swap(server_fd, rhs.server_fd);
+    std::swap(client_fd, rhs.client_fd);
+    std::swap(dummy_buffer, rhs.dummy_buffer);
   }
 
-  return data;
-}
-
-void print_child_pipe(std::string_view child_string_output)
-{
-  if (child_string_output.empty())
-    return;
-
-  std::cout << "Child process:" << std::endl;
-  for (auto line : child_string_output | std::views::split('\n') | std::views::transform([](auto&& subrange)
+  IPCSemaphore(int _server_fd, int _client_fd) : server_fd{ _server_fd }, client_fd{ _client_fd }, dummy_buffer{}
   {
-    return std::string_view{subrange.begin(), subrange.end()};
-  }))
-    std::cout << "\t\t" << line << std::endl;
+    // Set client fd to be blocking
+    if (fcntl(client_fd, F_SETFL, fcntl(client_fd, F_GETFL, 0) & ~O_NONBLOCK) < 0)
+      std::cerr << "Failed to set blocking flag for socket" << std::endl;
+  }
+
+  IPCSemaphore& operator=(const IPCSemaphore&) = delete;
+  IPCSemaphore& operator=(IPCSemaphore&& rhs) noexcept
+  {
+    std::swap(server_fd, rhs.server_fd);
+    std::swap(client_fd, rhs.client_fd);
+    std::swap(dummy_buffer, rhs.dummy_buffer);
+    return *this;
+  }
+
+  void wait()
+  {
+    const auto bytes_read{ read(client_fd, dummy_buffer.data(), dummy_buffer.size()) };
+    if (bytes_read == 0)
+      return;
+
+    if (bytes_read < 0)
+      std::cerr << "Failed to read from IPC semaphore socket. Error: " << errno << std::endl;
+
+    // Sanity check
+    if (bytes_read != 1)
+      std::cerr << "Unexpected amount of bytss read. This could mean we somehow have more signal's than wait's." << std::endl;
+
+    if (dummy_buffer[0] != '\0')
+      std::cerr << "Received unexpected data from client. Have the client socket forgotten to transition to \"semaphore\" mode?" << std::endl;
+  }
+
+  void signal()
+  {
+    char dummy_data = 0;
+    const auto bytes_written{ write(client_fd, &dummy_data, 1) };
+    if (bytes_written == 1)
+      return;
+
+    if (bytes_written < 0)
+      std::cerr << "Failed to write to IPC semaphore socket. Error: " << errno << std::endl;
+    else
+      std::cerr << "Unexpected amount of bytes written" << std::endl;
+  }
+
+  ~IPCSemaphore()
+  {
+    if (client_fd == -1 || server_fd == -1)
+      return;
+
+    if (close(client_fd) < 0 || close(server_fd) < 0)
+      std::cerr << "Failed to close IPC semaphore socket:" << errno << std::endl;
+  }
+};
+
+std::optional<std::tuple<std::vector<ConnectionData>, std::future<int>, IPCSemaphore>> init_child_process_and_fetch_connection_data()
+{
+  // Create a temp path we will use for the socket connection
+  std::error_code ec;
+  // 20 characters is probably enough to guarantee uniqueness
+  const auto socket_addr_path{
+    std::filesystem::temp_directory_path(ec) / std::format("{}.sock", random_alphanumeric_string(20))
+  };
+  assert(!ec); // We don't expect this to fail very often
+
+  if (std::filesystem::exists(socket_addr_path, ec) || ec)
+  {
+    std::cerr <<
+      "Despite all odds, the unique path dedicated for our socket connection somehow exists or failed. Error code " <<
+      ec.value() << std::endl;
+    return {};
+  }
+
+  // Create the socket
+  int server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+  if (server_fd < 0)
+  {
+    std::cerr << "Failed to create server socket. Error code: " << errno << std::endl;
+    return {};
+  }
+
+  // Set fd to be non-blocking
+  // if (fcntl(child_process_fd, F_SETFL, fcntl(child_process_fd, F_GETFL, 0) | O_NONBLOCK) < 0)
+  // {
+  //   std::cerr << "Failed to set flags for child process" << std::endl;
+  //   return -1;
+  // }
+
+  sockaddr_un server_addr{
+    .sun_family = AF_UNIX,
+    .sun_path = {},
+  };
+  std::strncpy(server_addr.sun_path, socket_addr_path.c_str(), socket_addr_path.string().size());
+  if (bind(server_fd, reinterpret_cast<sockaddr*>(&server_addr), sizeof(sockaddr_un)) < 0)
+  {
+    std::cerr << "Failed to bind socket. Error code: " << errno << std::endl;
+    return {};
+  }
+
+  if (listen(server_fd, 1) < 0)
+  {
+    std::cerr << "Failed to set socket to listen. Error code: " << errno << std::endl;
+    return {};
+  }
+
+
+  // The current thread will block while waiting for incoming socket connections. So for debugging purposes we start
+  // and observe the child process in a separate thread so we can pipe its output to the standard output
+  auto child_process_job = std::async(std::launch::async, [socket_addr_path]()
+  {
+    const std::string cmd{std::format("{} {}", VIEWER_PATH, socket_addr_path.string())};
+    auto child_std_output = popen(cmd.c_str(), "r");
+    if (child_std_output == nullptr)
+    {
+      std::cout << "Failed to spawn child process" << std::endl;
+      return -1;
+    }
+
+    const auto child_process_fd = fileno(child_std_output);
+    if (fcntl(child_process_fd, F_GETFD) < 0)
+    {
+      std::cerr << "Child process FD is invalid" << std::endl;
+      return -1;
+    }
+
+    if (fcntl(child_process_fd, F_SETFL, fcntl(child_process_fd, F_GETFL, 0) | O_NONBLOCK) < 0)
+    {
+      std::cerr << "Failed to set flags for child process" << std::endl;
+      return -1;
+    }
+
+    while (fcntl(child_process_fd, F_GETFD) > -1)
+    {
+      auto output{extract_from_stdout_stream(child_std_output)};
+      if (!output.empty())
+        print_child_pipe(output);
+      std::this_thread::sleep_for(std::chrono::milliseconds{10});
+    }
+
+    return 0;
+  });
+
+  std::cout << "Waiting for child process..." << std::endl;
+  int client_fd = accept(server_fd, nullptr, nullptr); // Blocks until a connection is made
+  // After receiving an incoming connection, delete the address path to prevent other clients from connecting
+  if (!std::filesystem::remove(socket_addr_path, ec))
+  {
+    std::cerr << std::format("Failed to remove socket addr file {}. Error code: {}", socket_addr_path.string(),
+                             ec.value()) << std::endl;
+    return {};
+  }
+
+  std::cout << "Got a connection!" << std::endl;
+
+  // Read some test data from child
+  std::vector<ConnectionData> connection_data{};
+  {
+    std::array<char, 128> buffer{};
+    int file_fd{-1};
+    // Read a maximum of 3 connection data messages
+    for (unsigned int i{ 0 }; i < 3; ++i)
+    {
+      const auto bytes_read{ read_fd(client_fd, buffer.data(), buffer.size(), file_fd) };
+      if (bytes_read == 0)
+        break;
+
+      if (bytes_read < 0)
+      {
+        // Special case: Client connection was interrupted. This is likely intentional, so just break out of the loop
+        if (fcntl(client_fd, F_GETFD) < 0)
+          break;
+        std::cerr << "Failed to receive socket message from child process. Error: " << errno << std::endl;
+        return {};
+      }
+      if (file_fd < 0 || fcntl(file_fd, F_GETFD) < 0)
+      {
+        std::cerr << "File descriptor received from child process is invalid" << std::endl;
+        return {};
+      }
+
+      const std::string_view formatted_message{buffer.data(), static_cast<std::size_t>(bytes_read)};
+      auto sub_connection_data{parse_connection_data_from_child_output(formatted_message)};
+      if (sub_connection_data.size() != 1)
+      {
+        std::cerr << "Unexpected amount of connection data received from child process" << std::endl;
+        return {};
+      }
+
+
+      sub_connection_data.front().handle = file_fd;
+      file_fd = -1;
+      connection_data.push_back(std::move(sub_connection_data.front()));
+      std::cout << "Received connection data from the child process" << std::endl;
+    }
+  }
+
+  // Transition the socket connection into a "semaphore"
+  IPCSemaphore semaphore{ server_fd, client_fd };
+  return std::tuple{ std::move(connection_data), std::move(child_process_job), std::move(semaphore) };
 }
+#endif
 
 std::pair<Semaphore, Semaphore> create_semaphores_from_connection_data(
   const std::vector<ConnectionData>& connection_data)
@@ -428,10 +647,10 @@ std::pair<Semaphore, Semaphore> create_semaphores_from_connection_data(
   Semaphore begin, end;
   for (const auto& data : connection_data)
   {
-    if (data.identifier != "OGL_begin" && data.identifier != "OGL_end")
+    if (data.identifier != "host_begin_sem" && data.identifier != "host_end_sem")
       continue;
 
-    auto& semaphore{data.identifier == "OGL_begin" ? begin : end};
+    auto& semaphore{data.identifier == "host_begin_sem" ? begin : end};
     GLuint id;
     glGenSemaphoresEXT(1, &id);
 #ifdef _WIN32
@@ -617,8 +836,8 @@ int main()
     }
 
 #ifdef _WIN32
-    auto [child_output_channel, child_std_write] = create_pipe();
-    if (!child_output_channel)
+    auto [child_std_read, child_std_write] = create_pipe();
+    if (!child_std_read)
       return -1;
 
     auto process = create_child_process(VIEWER_PATH, std::move(child_std_write));
@@ -627,205 +846,40 @@ int main()
       std::cout << "Failed to spawn process" << std::endl;
       return -1;
     }
-#elif __linux__
-    // Create a temp path we will use for the socket connection
-    std::error_code ec;
-    // 20 characters is probably enough to guarantee uniqueness
-    const auto socket_addr_path{
-      std::filesystem::temp_directory_path(ec) / std::format("{}.sock", random_alphanumeric_string(20))
-    };
-    assert(!ec); // We don't expect this to fail very often
-
-    if (std::filesystem::exists(socket_addr_path, ec) || ec)
-    {
-      std::cerr <<
-        "Despite all odds, the unique path dedicated for our socket connection somehow exists or failed. Error code " <<
-        ec.value() << std::endl;
-      return -1;
-    }
-
-    // Create the socket
-    int server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (server_fd < 0)
-    {
-      std::cerr << "Failed to create server socket. Error code: " << errno << std::endl;
-      return -1;
-    }
-
-    // Set fd to be non-blocking
-    // if (fcntl(child_process_fd, F_SETFL, fcntl(child_process_fd, F_GETFL, 0) | O_NONBLOCK) < 0)
-    // {
-    //   std::cerr << "Failed to set flags for child process" << std::endl;
-    //   return -1;
-    // }
-
-    sockaddr_un server_addr{
-      .sun_family = AF_UNIX,
-      .sun_path = {},
-    };
-    std::strncpy(server_addr.sun_path, socket_addr_path.c_str(), socket_addr_path.string().size());
-    if (bind(server_fd, reinterpret_cast<sockaddr*>(&server_addr), sizeof(sockaddr_un)) < 0)
-    {
-      std::cerr << "Failed to bind socket. Error code: " << errno << std::endl;
-      return -1;
-    }
-
-    if (listen(server_fd, 1) < 0)
-    {
-      std::cerr << "Failed to set socket to listen. Error code: " << errno << std::endl;
-      return -1;
-    }
-
-    // The current thread will block while waiting for incoming socket connections. So for debugging purposes we start
-    // and observe the child process in a separate thread so we can pipe its output to the standard output
-    auto child_process_job = std::async(std::launch::async, [socket_addr_path]()
-    {
-      const std::string cmd{std::format("{} {}", VIEWER_PATH, socket_addr_path.string())};
-      auto child_std_output = popen(cmd.c_str(), "r");
-      if (child_std_output == nullptr)
-      {
-        std::cout << "Failed to spawn child process" << std::endl;
-        return -1;
-      }
-
-      const auto child_process_fd = fileno(child_std_output);
-      if (fcntl(child_process_fd, F_GETFD) < 0)
-      {
-        std::cerr << "Child process FD is invalid" << std::endl;
-        return -1;
-      }
-
-      if (fcntl(child_process_fd, F_SETFL, fcntl(child_process_fd, F_GETFL, 0) | O_NONBLOCK) < 0)
-      {
-        std::cerr << "Failed to set flags for child process" << std::endl;
-        return -1;
-      }
-
-      while (fcntl(child_process_fd, F_GETFD) > -1)
-      {
-        auto output{extract_from_stdout_stream(child_std_output)};
-        if (!output.empty())
-          print_child_pipe(output);
-        std::this_thread::sleep_for(std::chrono::seconds{1});
-      }
-
-      return 0;
-    });
-
-    std::cout << "Waiting for child process..." << std::endl;
-    int client_fd = accept(server_fd, nullptr, nullptr); // Blocks until a connection is made
-    // After receiving an incoming connection, delete the address path to prevent other clients from connecting
-    if (!std::filesystem::remove(socket_addr_path, ec))
-    {
-      std::cerr << std::format("Failed to remove socket addr file {}. Error code: {}", socket_addr_path.string(),
-                               ec.value()) << std::endl;
-      return -1;
-    }
-
-    std::cout << "Got a connection!" << std::endl;
-
-    // Read some test data from child
     std::vector<ConnectionData> connection_data{};
-    {
-      std::array<char, 128> buffer{};
-      int file_fd{-1};
-      // Read a maximum of 3 connection data messages
-      for (unsigned int i{ 0 }; i < 3; ++i)
-      {
-        const auto bytes_read{ read_fd(client_fd, buffer.data(), buffer.size(), file_fd) };
-        if (bytes_read == 0)
-          break;
+    for (unsigned int attempts { 0u }; attempts < 10u && connection_data.empty(); ++attempts) {
+      connection_data = fetch_connection_data_from_child_channel(child_std_read);
+      if (!connection_data.empty())
+        break;
 
-        if (bytes_read < 0)
-        {
-          // Special case: Client connection was interrupted. This is likely intentional, so just break out of the loop
-          if (fcntl(client_fd, F_GETFD) < 0)
-            break;
-          std::cerr << "Failed to receive socket message from child process. Error: " << errno << std::endl;
-          return -1;
-        }
-        if (file_fd < 0 || fcntl(file_fd, F_GETFD) < 0)
-        {
-          std::cerr << "File descriptor received from child process is invalid" << std::endl;
-          return -1;
-        }
-
-        const std::string_view formatted_message{buffer.data(), static_cast<std::size_t>(bytes_read)};
-        auto sub_connection_data{parse_connection_data_from_child_output(formatted_message)};
-        if (sub_connection_data.size() != 1)
-        {
-          std::cerr << "Unexpected amount of connection data received from child process" << std::endl;
-          return -1;
-        }
-
-
-        sub_connection_data.front().handle = file_fd;
-        file_fd = -1;
-        connection_data.push_back(std::move(sub_connection_data.front()));
-        std::cout << "Received connection data from the child process" << std::endl;
-      }
+      std::this_thread::sleep_for(std::chrono::seconds{1u});
     }
-
-    if (close(client_fd) < 0 || close(server_fd) < 0)
-    {
-      std::cerr << "Failed to close child process socket:" << errno << std::endl;
-      return -1;
-    }
-
-    std::cout << "Closed the child process socket" << std::endl;
-
-
-    // Set fd to be non-blocking
-    // if (fcntl(child_process_fd, F_SETFL, fcntl(child_process_fd, F_GETFL, 0) | O_NONBLOCK) < 0)
-    // {
-    //   std::cerr << "Failed to set flags for child process" << std::endl;
-    //   return -1;
-    // }
-
-
-#endif
-
-    // std::vector<ConnectionData> connection_data{};
-    // for (unsigned int attempts { 0u }; attempts < 10u && connection_data.empty(); ++attempts) {
-    //   // Note: child_output_channel is platform dependent but in all platforms represents some sort of "channel",
-    //   // i.e. a directional data stream from the child process to the parent process. On Windows this is a pipe,
-    //   // and on Linux based systems this is a socket.
-    //   connection_data = fetch_connection_data_from_child_channel(child_output_channel);
-    //   if (!connection_data.empty())
-    //     break;
-    //
-    //   std::this_thread::sleep_for(std::chrono::seconds{1u});
-    // }
     if (connection_data.empty())
     {
       std::cout << "Failed to fetch connection data after 10 attempts" << std::endl;
       return -1;
     }
+#elif __linux__
+    std::vector<ConnectionData> connection_data{};
+    std::future<int> _child_process_job;
+    IPCSemaphore child_process_semaphore{};
+    if (auto result{ init_child_process_and_fetch_connection_data() })
+    {
+      connection_data = std::move(std::get<0>(*result));
+      _child_process_job = std::move(std::get<1>(*result));
+      child_process_semaphore = std::move(std::get<2>(*result));
+    }
+    else
+    {
+      return -1;
+    }
+#endif
 
     std::cout << "Found connection data: " << std::endl;
     for (const auto& data : connection_data)
       std::cout << std::format("{{ type: {}, identifier: {} }}",
                                data.type == ConnectionData::Type::Semaphore ? "Semaphore" : "Image",
                                data.identifier) << std::endl;
-
-    // #if __linux__
-    //     // Note: Initially I wanted to use pidfd_getfd because it's easier to use. However, due to security restrictions
-    //     // around the non-safe pidfd_getfd syscall, a process is required to disable some extra security parameters
-    //     // for this call to succeed.
-    //     // TODO: Pass FD using Unix sockets :(
-    //     for (auto& data : connection_data)
-    //     {
-    //       if (auto new_fd{syscall(SYS_pidfd_getfd, child_process_fd, data.handle, 0)}; new_fd >= 0)
-    //       {
-    //         data.handle = static_cast<int>(new_fd);
-    //       }
-    //       else
-    //       {
-    //         std::cerr << std::format("Failed to steal FD handle from child process with error: {}", errno) << std::endl;
-    //         return -1;
-    //       }
-    //     }
-    // #endif
 
     auto [begin_semaphore, end_semaphore] = create_semaphores_from_connection_data(connection_data);
     const auto shared_texture = create_texture_from_connection_data(connection_data);
@@ -845,7 +899,10 @@ int main()
     glEnable(GL_CULL_FACE);
     glDisable(GL_DEPTH_TEST);
 
-    end_semaphore.signal(*shared_texture);
+    // end_semaphore.signal(*shared_texture);
+    // At this point both the host and the client will wait for both it's start and end semaphores. One of them has to
+    // take a lead, and here we choose to start with the host (as the client uses the image data created by the host).
+    // begin_semaphore.signal(*shared_texture);
     glFlush();
 
     auto last_tp{std::chrono::steady_clock::now()};
@@ -854,10 +911,14 @@ int main()
                              0.001) << std::endl;
 
     float t{0.f};
+    // We let the child process know we are ready to start with the rendering by issuing a first signal
+    child_process_semaphore.signal();
     while (!glfwWindowShouldClose(window))
     {
       if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
         glfwSetWindowShouldClose(window, true);
+
+      std::this_thread::sleep_for(std::chrono::seconds{1});
 
       const auto current_tp{std::chrono::steady_clock::now()};
       const auto delta_t = std::chrono::duration_cast<std::chrono::milliseconds>(current_tp - last_tp).count() * 0.001;
@@ -871,7 +932,9 @@ int main()
       const auto mvp{glm::inverse(p_mat * v_mat)};
 
       // Wait for rendering to be ready
+      child_process_semaphore.wait();
       begin_semaphore.wait(*shared_texture);
+      std::cout << "Host started rendering" << std::endl;
       // glFlush();
 
       shared_texture_framebuffer.bind();
@@ -885,11 +948,13 @@ int main()
       shared_texture_framebuffer.unbind();
 
       // Signal the Vulkan app that OpenGL rendering is done
+      std::cout << "Host done rendering" << std::endl;
       end_semaphore.signal(*shared_texture);
 
       // OpenGL usually chooses itself when to flush commands to the GPU, but since the Vulkan implementation
       // is waiting for synchronization from OpenGL we need to explicitly flush commands to the GPU every frame.
       glFlush();
+      child_process_semaphore.signal();
 
 #ifdef _WIN32
       print_child_pipe(extract_from_child_pipe(*child_output_channel));
