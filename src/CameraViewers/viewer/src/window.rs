@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crate::platform::IPCChannel;
 use crate::render_context::RenderContext;
@@ -16,7 +16,6 @@ pub struct Window {
     inner_window: Option<Arc<winit::window::Window>>,
     context: Option<RenderContext>,
     app_timer: Instant,
-    first_frame: bool,
     pub channel: Option<IPCChannel>,
 }
 
@@ -27,7 +26,6 @@ impl Default for Window {
             inner_window: None,
             context: None,
             app_timer: Instant::now(),
-            first_frame: true,
             channel: None,
         }
     }
@@ -99,12 +97,6 @@ impl ApplicationHandler for Window {
         if self.close_requested {
             event_loop.exit();
         } else {
-            // We want to give the parent process a bit of initial time to finish setup, so we wait
-            // a bit before rendering the first frame.
-            // if self.first_frame {
-            //     std::thread::sleep(Duration::from_secs(30));
-            //     self.first_frame = false;
-            // }
             self.inner_window.as_ref().unwrap().request_redraw();
         }
     }

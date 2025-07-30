@@ -456,6 +456,14 @@ public:
 
   void wait()
   {
+#ifdef _DEBUG
+    if (fcntl(client_fd, F_GETFD) < 0)
+    {
+      std::cerr << "Client socket connection has expired" << std::endl;
+      return;
+    }
+#endif
+
     const auto bytes_read{ read(client_fd, dummy_buffer.data(), dummy_buffer.size()) };
     if (bytes_read == 0)
       return;
@@ -473,6 +481,14 @@ public:
 
   void signal()
   {
+#ifdef _DEBUG
+    if (fcntl(client_fd, F_GETFD) < 0)
+    {
+      std::cerr << "Client socket connection has expired" << std::endl;
+      return;
+    }
+#endif
+
     char dummy_data = 0;
     const auto bytes_written{ write(client_fd, &dummy_data, 1) };
     if (bytes_written == 1)
@@ -489,12 +505,107 @@ public:
     if (client_fd == -1 || server_fd == -1)
       return;
 
+    // Perform a last signal to free any possibly waiting threads
+    signal();
+
     if (close(client_fd) < 0 || close(server_fd) < 0)
       std::cerr << "Failed to close IPC semaphore socket:" << errno << std::endl;
   }
 };
 
-std::optional<std::tuple<std::vector<ConnectionData>, std::future<int>, IPCSemaphore>> init_child_process_and_fetch_connection_data()
+class ChildProcess
+{
+private:
+  std::atomic<FILE*> process_stream{ nullptr };
+  std::future<int> return_code;
+
+public:
+  ChildProcess() = default;
+  ChildProcess(const ChildProcess&) = delete;
+  ChildProcess(ChildProcess&& rhs)
+    : process_stream{ rhs.process_stream.exchange(nullptr) }, return_code{ std::move(rhs.return_code) }
+  {
+    // The current implementation of ChildProcess can invoke undefined behaviour due to a dangling this pointer captured
+    // in the async lambda if the ChildProcess is moved before the process_stream was set. We therefore have to assert
+    // this here.
+    assert(process_stream.load() != nullptr);
+  }
+
+  ChildProcess& operator=(const ChildProcess&) = delete;
+  ChildProcess& operator=(ChildProcess&& rhs)
+  {
+    // Steal the stream
+    process_stream.store(rhs.process_stream.exchange(nullptr));
+
+    // The current implementation of ChildProcess can invoke undefined behaviour due to a dangling this pointer captured
+    // in the async lambda if the ChildProcess is moved before the process_stream was set. We therefore have to assert
+    // this here.
+    assert(process_stream.load() != nullptr);
+
+    std::swap(return_code, rhs.return_code);
+    return *this;
+  }
+
+  explicit ChildProcess(const std::string& socket_addr_path)
+  {
+    // The current thread will block while waiting for incoming socket connections. So for debugging purposes we start
+    // and observe the child process in a separate thread so we can pipe its output to the standard output
+    return_code = std::async(std::launch::async, [this, socket_addr_path]
+    {
+      const std::string cmd{std::format("{} {}", VIEWER_PATH, socket_addr_path)};
+      auto child_std_output = popen(cmd.c_str(), "r");
+      if (child_std_output == nullptr)
+      {
+        std::cout << "Failed to spawn child process" << std::endl;
+        return -1;
+      }
+
+      this->process_stream.store(child_std_output);
+
+      const auto child_process_fd = fileno(child_std_output);
+      if (fcntl(child_process_fd, F_GETFD) < 0)
+      {
+        std::cerr << "Child process FD is invalid" << std::endl;
+        return -1;
+      }
+
+      if (fcntl(child_process_fd, F_SETFL, fcntl(child_process_fd, F_GETFL, 0) | O_NONBLOCK) < 0)
+      {
+        std::cerr << "Failed to set flags for child process" << std::endl;
+        return -1;
+      }
+
+      while (fcntl(child_process_fd, F_GETFD) > -1)
+      {
+        auto output{extract_from_stdout_stream(child_std_output)};
+        if (!output.empty())
+          print_child_pipe(output);
+        std::this_thread::sleep_for(std::chrono::milliseconds{1});
+      }
+
+      return 0;
+    });
+  }
+
+  int close()
+  {
+    const auto unique_process_stream{ process_stream.exchange(nullptr) };
+    if (unique_process_stream == nullptr)
+      return 0;
+
+    const auto command_return_code{ pclose(unique_process_stream) };
+    if (command_return_code < 0)
+      return command_return_code;
+    return return_code.get();
+  }
+
+  ~ChildProcess()
+  {
+    close();
+  }
+};
+
+std::optional<std::tuple<std::vector<ConnectionData>, ChildProcess, IPCSemaphore>> init_child_process_and_fetch_connection_data()
 {
   // Create a temp path we will use for the socket connection
   std::error_code ec;
@@ -544,42 +655,7 @@ std::optional<std::tuple<std::vector<ConnectionData>, std::future<int>, IPCSemap
     return {};
   }
 
-
-  // The current thread will block while waiting for incoming socket connections. So for debugging purposes we start
-  // and observe the child process in a separate thread so we can pipe its output to the standard output
-  auto child_process_job = std::async(std::launch::async, [socket_addr_path]()
-  {
-    const std::string cmd{std::format("{} {}", VIEWER_PATH, socket_addr_path.string())};
-    auto child_std_output = popen(cmd.c_str(), "r");
-    if (child_std_output == nullptr)
-    {
-      std::cout << "Failed to spawn child process" << std::endl;
-      return -1;
-    }
-
-    const auto child_process_fd = fileno(child_std_output);
-    if (fcntl(child_process_fd, F_GETFD) < 0)
-    {
-      std::cerr << "Child process FD is invalid" << std::endl;
-      return -1;
-    }
-
-    if (fcntl(child_process_fd, F_SETFL, fcntl(child_process_fd, F_GETFL, 0) | O_NONBLOCK) < 0)
-    {
-      std::cerr << "Failed to set flags for child process" << std::endl;
-      return -1;
-    }
-
-    while (fcntl(child_process_fd, F_GETFD) > -1)
-    {
-      auto output{extract_from_stdout_stream(child_std_output)};
-      if (!output.empty())
-        print_child_pipe(output);
-      std::this_thread::sleep_for(std::chrono::milliseconds{10});
-    }
-
-    return 0;
-  });
+  ChildProcess child_process{ socket_addr_path.string() };
 
   std::cout << "Waiting for child process..." << std::endl;
   int client_fd = accept(server_fd, nullptr, nullptr); // Blocks until a connection is made
@@ -637,7 +713,7 @@ std::optional<std::tuple<std::vector<ConnectionData>, std::future<int>, IPCSemap
 
   // Transition the socket connection into a "semaphore"
   IPCSemaphore semaphore{ server_fd, client_fd };
-  return std::tuple{ std::move(connection_data), std::move(child_process_job), std::move(semaphore) };
+  return std::tuple{ std::move(connection_data), std::move(child_process), std::move(semaphore) };
 }
 #endif
 
@@ -861,12 +937,12 @@ int main()
     }
 #elif __linux__
     std::vector<ConnectionData> connection_data{};
-    std::future<int> _child_process_job;
+    ChildProcess child_process;
     IPCSemaphore child_process_semaphore{};
     if (auto result{ init_child_process_and_fetch_connection_data() })
     {
       connection_data = std::move(std::get<0>(*result));
-      _child_process_job = std::move(std::get<1>(*result));
+      child_process = std::move(std::get<1>(*result));
       child_process_semaphore = std::move(std::get<2>(*result));
     }
     else
@@ -918,7 +994,7 @@ int main()
       if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
         glfwSetWindowShouldClose(window, true);
 
-      std::this_thread::sleep_for(std::chrono::seconds{1});
+      // std::this_thread::sleep_for(std::chrono::seconds{1});
 
       const auto current_tp{std::chrono::steady_clock::now()};
       const auto delta_t = std::chrono::duration_cast<std::chrono::milliseconds>(current_tp - last_tp).count() * 0.001;
@@ -956,6 +1032,16 @@ int main()
       glFlush();
       child_process_semaphore.signal();
 
+      // Draw an additional time directly to the screen to verify what's being passed to the viewer program corresponds
+      // with what was written
+      glClearColor(0.2f, 0.3f, t, 1.0f);
+      glClear(GL_COLOR_BUFFER_BIT);
+
+      glUniformMatrix4fv(0, 1, GL_FALSE, glm::value_ptr(mvp));
+      glUniform1f(1, t * 3.0);
+
+      glDrawArrays(GL_TRIANGLES, 0, 6);
+
 #ifdef _WIN32
       print_child_pipe(extract_from_child_pipe(*child_output_channel));
 #endif
@@ -978,6 +1064,12 @@ int main()
     //   std::cerr << "Failed to close child process" << std::endl;
     //   return -1;
     // }
+    child_process_semaphore = {}; // Close the semaphore (possibly forcing the client to run into a "pipe destroyed" signal)
+    if (auto child_process_return_code{ child_process.close() }; child_process_return_code < 0)
+    {
+      std::cerr << "Child process successfully closed but returned error code: " << child_process_return_code << std::endl;
+      return -1;
+    }
 #endif
 
     glUseProgram(0);

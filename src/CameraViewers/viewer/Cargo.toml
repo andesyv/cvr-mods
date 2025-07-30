@@ -11,7 +11,7 @@ vulkano-win = "0.34.*"
 vulkano-shaders = "0.35.*"
 ash = "0.38.0" # For some minor functionality not covered by vulkano
 winit = "0.30.11" # Apparantly has to be hardcoded to same version vulkano-win uses
-cgmath = "0.18.0" # Seems like a nice simple math library for non-complex CG coding
+glam = { version = "0.30.5", features = ["debug-glam-assert"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.174"

@@ -1,19 +1,23 @@
 use crate::create_external_semaphore;
 use crate::external_image::ExternalImage;
-use crate::platform::{MemoryExporter, IPCChannel, get_external_memory_type, get_external_semaphore_type, IPCSemaphore};
-use cgmath::{Deg, Matrix4, PerspectiveFov, Point3, Vector3};
+use crate::platform::{
+    IPCChannel, IPCSemaphore, MemoryExporter, get_external_memory_type, get_external_semaphore_type,
+};
+use glam::{Mat4, Vec3};
 use std::sync::Arc;
-use std::time::Duration;
 use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer};
 use vulkano::command_buffer::allocator::{CommandBufferAllocator, StandardCommandBufferAllocator};
 use vulkano::command_buffer::{
     AutoCommandBufferBuilder, CommandBufferUsage, RenderPassBeginInfo, SemaphoreSubmitInfo,
     SubmitInfo,
 };
+use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
+use vulkano::descriptor_set::{DescriptorSet, WriteDescriptorSet};
 use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
 use vulkano::device::{
     Device, DeviceCreateInfo, DeviceExtensions, Queue, QueueCreateInfo, QueueFlags,
 };
+use vulkano::image::sampler::{Filter, Sampler, SamplerCreateInfo};
 use vulkano::image::view::ImageView;
 use vulkano::image::{Image, ImageUsage};
 use vulkano::instance::{Instance, InstanceCreateInfo};
@@ -24,14 +28,14 @@ use vulkano::pipeline::graphics::rasterization::{CullMode, RasterizationState};
 use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition};
 use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
 use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
-use vulkano::pipeline::{
-    GraphicsPipeline, Pipeline, PipelineLayout, PipelineShaderStageCreateInfo,
-};
+use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout, PipelineShaderStageCreateInfo};
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass};
-use vulkano::swapchain::{Surface, Swapchain, SwapchainCreateInfo, acquire_next_image};
+use vulkano::swapchain::{
+    Surface, Swapchain, SwapchainCreateInfo, SwapchainPresentInfo, acquire_next_image,
+};
 use vulkano::sync::GpuFuture;
 use vulkano::sync::semaphore::Semaphore;
-use vulkano::{Validated, VulkanLibrary};
+use vulkano::{Validated, VulkanError, VulkanLibrary};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::Window;
 
@@ -61,24 +65,19 @@ pub const DEVICE_EXTENSIONS: DeviceExtensions = DeviceExtensions {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Vertex, BufferContents)]
-pub struct MyVertex {
+pub struct MeshVertex {
     #[format(R32G32B32_SFLOAT)]
     position: [f32; 3],
     #[format(R32G32_SFLOAT)]
     tex_coord: [f32; 2],
 }
 
-impl MyVertex {
-    pub const fn new(position: [f32; 3], tex_coord: [f32; 2]) -> Self {
-        MyVertex {
-            position,
-            tex_coord,
-        }
-    }
-}
-
-pub fn create_instance(event_loop: &ActiveEventLoop) -> Arc<Instance> {
+fn create_instance(event_loop: &ActiveEventLoop) -> Arc<Instance> {
     let library = VulkanLibrary::new().unwrap();
+    if library.api_version() < vulkano::Version::V1_1 {
+        panic!("Vulkan 1.1 or higher is required");
+    }
+
     const POSSIBLE_DEBUG_LAYERS: [Option<&str>; 3] = [
         Some("VK_LAYER_KHRONOS_validation"),         // The best one
         Some("VK_LAYER_LUNARG_standard_validation"), // The old one
@@ -86,8 +85,11 @@ pub fn create_instance(event_loop: &ActiveEventLoop) -> Arc<Instance> {
     ];
 
     let mut required_extensions = Surface::required_extensions(event_loop).unwrap();
-    required_extensions.ext_debug_utils = true;
-    required_extensions.khr_get_physical_device_properties2 = true;
+    // With ext_debug_utils we can specify a custom debug message handler. But I don't really have
+    // a need for this as of right now.
+    // required_extensions.ext_debug_utils = true;
+    // Included in Vulkan 1.1, so not needed anymore.
+    // required_extensions.khr_get_physical_device_properties2 = true;
     required_extensions.khr_external_memory_capabilities = true;
     required_extensions.khr_external_semaphore_capabilities = true;
     required_extensions.khr_external_fence_capabilities = true;
@@ -111,14 +113,14 @@ pub fn create_instance(event_loop: &ActiveEventLoop) -> Arc<Instance> {
     Instance::new(
         library.clone(),
         InstanceCreateInfo {
-            application_name: Some("Viewer".to_string()),
+            application_name: Some(env!("CARGO_PKG_NAME").to_string()),
             application_version: env!("CARGO_PKG_VERSION").parse().unwrap(),
             enabled_extensions: required_extensions,
-            enabled_layers: enabled_layers,
+            enabled_layers,
             ..Default::default()
         },
     )
-    .map_err(Validated::unwrap)
+    // .map_err(Validated::unwrap)
     .expect("Could not create Vulkan instance")
 }
 
@@ -174,7 +176,7 @@ pub fn create_instance(event_loop: &ActiveEventLoop) -> Arc<Instance> {
 //     .unwrap()
 // }
 
-pub fn find_physical_device_and_queue_family(
+fn find_physical_device_and_queue_family(
     instance: Arc<Instance>,
     surface: &Surface,
 ) -> Option<(Arc<PhysicalDevice>, u32)> {
@@ -202,15 +204,14 @@ pub fn find_physical_device_and_queue_family(
         })
 }
 
-pub fn create_swapchain(
+fn create_swapchain(
     device: &Arc<Device>,
     surface: &Arc<Surface>,
 ) -> Option<(Arc<Swapchain>, Vec<Arc<Image>>)> {
-    let mut surface_capabilities = device
+    let surface_capabilities = device
         .physical_device()
         .surface_capabilities(surface, Default::default())
         .unwrap();
-    surface_capabilities.min_image_count = surface_capabilities.min_image_count.max(3);
 
     let image_format = device
         .physical_device()
@@ -219,19 +220,22 @@ pub fn create_swapchain(
         .first()
         .and_then(|t| Some(t.0))?;
 
+    let image_extent = surface
+        .object()
+        .unwrap()
+        .downcast_ref::<Window>()
+        .unwrap()
+        .inner_size()
+        .into();
+
     Swapchain::new(
         device.clone(),
         surface.clone(),
         SwapchainCreateInfo {
-            min_image_count: surface_capabilities.min_image_count,
+            // min_image_count: surface_capabilities.min_image_count.max(2),
+            min_image_count: surface_capabilities.min_image_count.max(3),
             image_format,
-            image_extent: surface
-                .object()
-                .unwrap()
-                .downcast_ref::<Window>()
-                .unwrap()
-                .inner_size()
-                .into(),
+            image_extent,
             image_usage: ImageUsage::COLOR_ATTACHMENT,
             ..Default::default()
         },
@@ -239,7 +243,7 @@ pub fn create_swapchain(
     .ok()
 }
 
-pub fn create_framebuffers(
+fn create_framebuffers(
     images: &[Arc<Image>],
     render_pass: &Arc<RenderPass>,
 ) -> (Vec<Arc<Framebuffer>>, Viewport) {
@@ -280,6 +284,40 @@ pub fn create_framebuffers(
     (framebuffers, viewport)
 }
 
+fn create_descriptor_set(
+    pipeline: &Arc<GraphicsPipeline>,
+    device: &Arc<Device>,
+    image_view: Arc<ImageView>,
+) -> Arc<DescriptorSet> {
+    let layout = &pipeline.layout().set_layouts()[0];
+    let descriptor_set_allocator = Arc::new(StandardDescriptorSetAllocator::new(
+        device.clone(),
+        Default::default(),
+    ));
+
+    let sampler = Sampler::new(
+        device.clone(),
+        SamplerCreateInfo {
+            mag_filter: Filter::Linear,
+            min_filter: Filter::Linear,
+            // address_mode: [SamplerAddressMode::Repeat; 3],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    DescriptorSet::new(
+        descriptor_set_allocator,
+        layout.clone(),
+        [
+            WriteDescriptorSet::sampler(0, sampler),
+            WriteDescriptorSet::image_view(1, image_view),
+        ],
+        [],
+    )
+    .unwrap()
+}
+
 mod vs {
     vulkano_shaders::shader! {
         ty: "vertex",
@@ -307,15 +345,26 @@ mod fs {
             #version 460
 
             layout(location = 0) in vec2 uv;
-            // layout(set = 0, binding = 0) uniform sampler2D tex;
+
+            layout(set = 0, binding = 0) uniform sampler s;
+            layout(set = 0, binding = 1) uniform texture2D tex;
+
             layout(location = 0) out vec4 frag_colour;
 
             void main() {
-                // frag_colour = vec4(texture(tex, uv).rgb, 1.0);
-                frag_colour = vec4(uv, 0.0, 1.0);
+                frag_colour = vec4(texture(sampler2D(tex, s), uv).rgb, 1.0);
+                // frag_colour = vec4(uv, 0.0, 1.0);
             }
             "
     }
+}
+
+struct ExternalCommunication {
+    begin_sem: Arc<Semaphore>,
+    end_sem: Arc<Semaphore>,
+    shared_image: ExternalImage,
+    host_process_semaphore: IPCSemaphore,
+    shared_image_descriptor_set: Arc<DescriptorSet>,
 }
 
 pub struct RenderContext {
@@ -323,14 +372,12 @@ pub struct RenderContext {
     command_buffer_allocator: Arc<dyn CommandBufferAllocator>,
     queue: Arc<Queue>,
     // queue_family_index: u32,
-    vertex_buffer: Subbuffer<[MyVertex]>,
+    vertex_buffer: Subbuffer<[MeshVertex]>,
     framebuffers: Vec<Arc<Framebuffer>>,
     swapchain: Arc<Swapchain>,
     swapchain_fences: Vec<Option<Box<dyn GpuFuture>>>,
-    begin_sem: Arc<Semaphore>,
-    end_sem: Arc<Semaphore>,
-    shared_image: ExternalImage,
-    host_process_semaphore: Option<IPCSemaphore>,
+    external: Option<ExternalCommunication>,
+    last_submitted_swapchain_image_index: usize,
 }
 
 impl RenderContext {
@@ -375,55 +422,6 @@ impl RenderContext {
 
         let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(device.clone()));
 
-        // Logic taken from https://github.com/vulkano-rs/vulkano/blob/master/examples/gl-interop/main.rs
-        // (which is based on https://github.com/KhronosGroup/Vulkan-Samples/blob/main/samples/extensions/open_gl_interop/open_gl_interop.cpp)
-
-        let semaphore_handle_type = get_external_semaphore_type(&physical_device).unwrap();
-        let memory_handle_type = get_external_memory_type(
-            &physical_device,
-            BufferUsage::TRANSFER_SRC
-                | BufferUsage::TRANSFER_DST
-                | BufferUsage::STORAGE_TEXEL_BUFFER,
-        )
-        .unwrap();
-
-        let begin_sem =
-            create_external_semaphore(device.clone(), semaphore_handle_type.into()).unwrap();
-        let end_sem =
-            create_external_semaphore(device.clone(), semaphore_handle_type.into()).unwrap();
-
-        let shared_image = ExternalImage::new(
-            device.clone(),
-            &memory_allocator,
-            dimensions,
-            memory_handle_type,
-        )
-        .unwrap();
-
-        let host_process_semaphore = owner_channel.map(|channel|{
-            let mut memory_exporter = MemoryExporter::from_channel(channel);
-            // The host (OGL) takes ownership of the image as soon as we're done with using it,
-            // signalled by end_sem. Therefore, VK end = OGL begin and OGL end = VK begin
-            memory_exporter.export_semaphore_to_owner_process(
-                "host_begin_sem",
-                &end_sem,
-                semaphore_handle_type,
-            );
-            memory_exporter.export_semaphore_to_owner_process(
-                "host_end_sem",
-                &begin_sem,
-                semaphore_handle_type,
-            );
-            memory_exporter.export_memory_to_owner_process(
-                "shared_image",
-                &shared_image,
-                memory_handle_type,
-            );
-            memory_exporter.flush_and_transform_to_semaphore()
-        });
-
-        // let image_view = image.try_into().unwrap();
-
         let render_pass = vulkano::single_pass_renderpass!(
             device.clone(),
             attachments: {
@@ -443,53 +441,162 @@ impl RenderContext {
         .unwrap();
 
         // Cube vertex data
-        const VERTICES: [MyVertex; 36] = [
+        // TODO: Fix texture coordinates
+        pub const CUBE_VERTICES: [MeshVertex; 36] = [
+            // Front
+            MeshVertex {
+                position: [-0.5, -0.5, 0.5],
+                tex_coord: [0.0, 0.0],
+            },
+            MeshVertex {
+                position: [0.5, -0.5, 0.5],
+                tex_coord: [1.0, 0.0],
+            },
+            MeshVertex {
+                position: [0.5, 0.5, 0.5],
+                tex_coord: [1.0, 1.0],
+            },
+            MeshVertex {
+                position: [0.5, 0.5, 0.5],
+                tex_coord: [1.0, 1.0],
+            },
+            MeshVertex {
+                position: [-0.5, 0.5, 0.5],
+                tex_coord: [0.0, 1.0],
+            },
+            MeshVertex {
+                position: [-0.5, -0.5, 0.5],
+                tex_coord: [0.0, 0.0],
+            },
+            // Right
+            MeshVertex {
+                position: [0.5, -0.5, 0.5],
+                tex_coord: [0.0, 0.0],
+            },
+            MeshVertex {
+                position: [0.5, -0.5, -0.5],
+                tex_coord: [1.0, 0.0],
+            },
+            MeshVertex {
+                position: [0.5, 0.5, -0.5],
+                tex_coord: [1.0, 1.0],
+            },
+            MeshVertex {
+                position: [0.5, 0.5, -0.5],
+                tex_coord: [1.0, 1.0],
+            },
+            MeshVertex {
+                position: [0.5, 0.5, 0.5],
+                tex_coord: [0.0, 1.0],
+            },
+            MeshVertex {
+                position: [0.5, -0.5, 0.5],
+                tex_coord: [0.0, 0.0],
+            },
+            // Back
+            MeshVertex {
+                position: [0.5, -0.5, -0.5],
+                tex_coord: [0.0, 0.0],
+            },
+            MeshVertex {
+                position: [-0.5, -0.5, -0.5],
+                tex_coord: [1.0, 0.0],
+            },
+            MeshVertex {
+                position: [-0.5, 0.5, -0.5],
+                tex_coord: [1.0, 1.0],
+            },
+            MeshVertex {
+                position: [-0.5, 0.5, -0.5],
+                tex_coord: [1.0, 1.0],
+            },
+            MeshVertex {
+                position: [0.5, 0.5, -0.5],
+                tex_coord: [0.0, 1.0],
+            },
+            MeshVertex {
+                position: [0.5, -0.5, -0.5],
+                tex_coord: [0.0, 0.0],
+            },
+            // Left
+            MeshVertex {
+                position: [-0.5, -0.5, -0.5],
+                tex_coord: [0.0, 0.0],
+            },
+            MeshVertex {
+                position: [-0.5, -0.5, 0.5],
+                tex_coord: [1.0, 0.0],
+            },
+            MeshVertex {
+                position: [-0.5, 0.5, 0.5],
+                tex_coord: [1.0, 1.0],
+            },
+            MeshVertex {
+                position: [-0.5, 0.5, 0.5],
+                tex_coord: [1.0, 1.0],
+            },
+            MeshVertex {
+                position: [-0.5, 0.5, -0.5],
+                tex_coord: [0.0, 1.0],
+            },
+            MeshVertex {
+                position: [-0.5, -0.5, -0.5],
+                tex_coord: [0.0, 0.0],
+            },
             // Top
-            MyVertex::new([1.0, 1.0, -1.0], [1.0, 1.0]),
-            MyVertex::new([-1.0, -1.0, -1.0], [0.0, 0.0]),
-            MyVertex::new([-1.0, 1.0, -1.0], [0.0, 1.0]),
-            MyVertex::new([1.0, 1.0, -1.0], [1.0, 1.0]),
-            MyVertex::new([1.0, -1.0, -1.0], [1.0, 0.0]),
-            MyVertex::new([-1.0, -1.0, -1.0], [0.0, 0.0]),
-            // Side
-            MyVertex::new([-1.0, -1.0, -1.0], [1.0, 1.0]),
-            MyVertex::new([-1.0, -1.0, 1.0], [1.0, 0.0]),
-            MyVertex::new([-1.0, 1.0, 1.0], [0.0, 0.0]),
-            MyVertex::new([-1.0, -1.0, -1.0], [1.0, 1.0]),
-            MyVertex::new([-1.0, 1.0, 1.0], [0.0, 0.0]),
-            MyVertex::new([-1.0, 1.0, -1.0], [0.0, 1.0]),
-            // Side
-            MyVertex::new([1.0, -1.0, 1.0], [1.0, 0.0]),
-            MyVertex::new([-1.0, -1.0, -1.0], [0.0, 1.0]),
-            MyVertex::new([1.0, -1.0, -1.0], [1.0, 1.0]),
-            MyVertex::new([1.0, -1.0, 1.0], [1.0, 0.0]),
-            MyVertex::new([-1.0, -1.0, 1.0], [0.0, 0.0]),
-            MyVertex::new([-1.0, -1.0, -1.0], [0.0, 1.0]),
-            // Side
-            MyVertex::new([1.0, 1.0, 1.0], [1.0, 0.0]),
-            MyVertex::new([1.0, -1.0, -1.0], [0.0, 1.0]),
-            MyVertex::new([1.0, 1.0, -1.0], [1.0, 1.0]),
-            MyVertex::new([1.0, -1.0, -1.0], [0.0, 1.0]),
-            MyVertex::new([1.0, 1.0, 1.0], [1.0, 0.0]),
-            MyVertex::new([1.0, -1.0, 1.0], [0.0, 0.0]),
-            // Side
-            MyVertex::new([1.0, 1.0, 1.0], [0.0, 0.0]),
-            MyVertex::new([1.0, 1.0, -1.0], [0.0, 1.0]),
-            MyVertex::new([-1.0, 1.0, -1.0], [1.0, 1.0]),
-            MyVertex::new([1.0, 1.0, 1.0], [0.0, 0.0]),
-            MyVertex::new([-1.0, 1.0, -1.0], [1.0, 1.0]),
-            MyVertex::new([-1.0, 1.0, 1.0], [1.0, 0.0]),
+            MeshVertex {
+                position: [-0.5, 0.5, 0.5],
+                tex_coord: [0.0, 0.0],
+            },
+            MeshVertex {
+                position: [0.5, 0.5, 0.5],
+                tex_coord: [1.0, 0.0],
+            },
+            MeshVertex {
+                position: [0.5, 0.5, -0.5],
+                tex_coord: [1.0, 1.0],
+            },
+            MeshVertex {
+                position: [0.5, 0.5, -0.5],
+                tex_coord: [1.0, 1.0],
+            },
+            MeshVertex {
+                position: [-0.5, 0.5, -0.5],
+                tex_coord: [0.0, 1.0],
+            },
+            MeshVertex {
+                position: [-0.5, 0.5, 0.5],
+                tex_coord: [0.0, 0.0],
+            },
             // Bottom
-            MyVertex::new([-1.0, 1.0, 1.0], [0.0, 0.0]),
-            MyVertex::new([-1.0, -1.0, 1.0], [1.0, 0.0]),
-            MyVertex::new([1.0, -1.0, 1.0], [1.0, 1.0]),
-            MyVertex::new([1.0, 1.0, 1.0], [0.0, 0.0]),
-            MyVertex::new([-1.0, 1.0, 1.0], [0.0, 1.0]),
-            MyVertex::new([1.0, -1.0, 1.0], [1.0, 1.0]),
+            MeshVertex {
+                position: [0.5, -0.5, 0.5],
+                tex_coord: [0.0, 0.0],
+            },
+            MeshVertex {
+                position: [-0.5, -0.5, 0.5],
+                tex_coord: [1.0, 0.0],
+            },
+            MeshVertex {
+                position: [-0.5, -0.5, -0.5],
+                tex_coord: [1.0, 1.0],
+            },
+            MeshVertex {
+                position: [-0.5, -0.5, -0.5],
+                tex_coord: [1.0, 1.0],
+            },
+            MeshVertex {
+                position: [0.5, -0.5, -0.5],
+                tex_coord: [0.0, 1.0],
+            },
+            MeshVertex {
+                position: [0.5, -0.5, 0.5],
+                tex_coord: [0.0, 0.0],
+            },
         ];
 
         let vertex_buffer = Buffer::from_iter(
-            memory_allocator,
+            memory_allocator.clone(),
             BufferCreateInfo {
                 usage: BufferUsage::VERTEX_BUFFER,
                 ..Default::default()
@@ -499,7 +606,7 @@ impl RenderContext {
                     | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
                 ..Default::default()
             },
-            VERTICES,
+            CUBE_VERTICES,
         )
         .unwrap();
 
@@ -509,7 +616,9 @@ impl RenderContext {
         let vs_entry_point = vs.entry_point("main").unwrap();
         let fs_entry_point = fs.entry_point("main").unwrap();
 
-        let vertex_input_state = MyVertex::per_vertex().definition(&vs_entry_point).unwrap();
+        let vertex_input_state = MeshVertex::per_vertex()
+            .definition(&vs_entry_point)
+            .unwrap();
 
         let stages = [vs_entry_point, fs_entry_point]
             .into_iter()
@@ -559,8 +668,68 @@ impl RenderContext {
         .map_err(Validated::unwrap)
         .unwrap();
 
+        // Logic taken from https://github.com/vulkano-rs/vulkano/blob/master/examples/gl-interop/main.rs
+        // (which is based on https://github.com/KhronosGroup/Vulkan-Samples/blob/main/samples/extensions/open_gl_interop/open_gl_interop.cpp)
+        let external = if let Some(channel) = owner_channel {
+            let semaphore_handle_type = get_external_semaphore_type(&physical_device).unwrap();
+            let memory_handle_type = get_external_memory_type(
+                &physical_device,
+                BufferUsage::TRANSFER_SRC
+                    | BufferUsage::TRANSFER_DST
+                    | BufferUsage::STORAGE_TEXEL_BUFFER,
+            )
+            .unwrap();
+
+            let begin_sem =
+                create_external_semaphore(device.clone(), semaphore_handle_type.into()).unwrap();
+            let end_sem =
+                create_external_semaphore(device.clone(), semaphore_handle_type.into()).unwrap();
+
+            let shared_image = ExternalImage::new(
+                device.clone(),
+                &memory_allocator,
+                dimensions,
+                memory_handle_type,
+            )
+            .unwrap();
+
+            let mut memory_exporter = MemoryExporter::from_channel(channel);
+            // The host (OGL) takes ownership of the image as soon as we're done with using it,
+            // signalled by end_sem. Therefore, VK end = OGL begin and OGL end = VK begin
+            memory_exporter.export_semaphore_to_owner_process(
+                "host_begin_sem",
+                &end_sem,
+                semaphore_handle_type,
+            );
+            memory_exporter.export_semaphore_to_owner_process(
+                "host_end_sem",
+                &begin_sem,
+                semaphore_handle_type,
+            );
+            memory_exporter.export_memory_to_owner_process(
+                "shared_image",
+                &shared_image,
+                memory_handle_type,
+            );
+            let host_process_semaphore = memory_exporter.flush_and_transform_to_semaphore();
+            let image_view = (&shared_image).try_into().unwrap();
+
+            let shared_image_descriptor_set = create_descriptor_set(&pipeline, &device, image_view);
+
+            Some(ExternalCommunication {
+                begin_sem,
+                end_sem,
+                shared_image,
+                host_process_semaphore,
+                shared_image_descriptor_set,
+            })
+        } else {
+            println!("Running without an attached host process (a.k.a. debug mode)");
+            None
+        };
+
         let command_buffer_allocator = Arc::new(StandardCommandBufferAllocator::new(
-            device.clone(),
+            device,
             Default::default(),
         ));
 
@@ -572,10 +741,8 @@ impl RenderContext {
             framebuffers,
             swapchain,
             swapchain_fences: Vec::new(),
-            begin_sem,
-            end_sem,
-            shared_image,
-            host_process_semaphore,
+            external,
+            last_submitted_swapchain_image_index: 0,
         }
 
         //
@@ -772,13 +939,18 @@ impl RenderContext {
     }
 
     pub fn draw(&mut self, time: f32) {
-
-        if let Some(semaphore) = self.host_process_semaphore.as_mut() {
+        if let Some(ExternalCommunication {
+            host_process_semaphore,
+            end_sem,
+            begin_sem,
+            ..
+        }) = self.external.as_mut()
+        {
             self.queue
                 .with(|mut q| unsafe {
                     q.submit_unchecked(
                         &[SubmitInfo {
-                            signal_semaphores: vec![SemaphoreSubmitInfo::new(self.end_sem.clone())],
+                            signal_semaphores: vec![SemaphoreSubmitInfo::new(end_sem.clone())],
                             ..Default::default()
                         }],
                         None,
@@ -793,15 +965,15 @@ impl RenderContext {
             // submit graphics commands which will end up in the expected order on the graphics
             // device.
             println!("Client done rendering");
-            semaphore.signal();
-            semaphore.wait();
+            host_process_semaphore.signal();
+            host_process_semaphore.wait();
             println!("Client started rendering");
 
             self.queue
                 .with(|mut q| unsafe {
                     q.submit_unchecked(
                         &[SubmitInfo {
-                            wait_semaphores: vec![SemaphoreSubmitInfo::new(self.begin_sem.clone())],
+                            wait_semaphores: vec![SemaphoreSubmitInfo::new(begin_sem.clone())],
                             ..Default::default()
                         }],
                         None,
@@ -818,10 +990,21 @@ impl RenderContext {
         .map_err(Validated::unwrap)
         .unwrap();
 
-        let (image_index, framebuffer_suboptimal, acquire_future) =
-            acquire_next_image(self.swapchain.clone(), Some(Duration::from_secs(1)))
-                .map_err(Validated::unwrap)
-                .unwrap();
+        let acquire_results = acquire_next_image(
+            self.swapchain.clone(),
+            None, /*Some(Duration::from_secs(1))*/
+        )
+        .map_err(Validated::unwrap);
+        match acquire_results {
+            Err(VulkanError::Timeout) => {
+                println!("Timeout while waiting for next image. Image was skipped.");
+                return;
+            }
+            Err(e) => panic!("Failed to acquire next image: {:?}", e),
+            _ => (),
+        };
+
+        let (image_index, framebuffer_suboptimal, acquire_future) = acquire_results.unwrap();
 
         if framebuffer_suboptimal {
             unimplemented!()
@@ -846,37 +1029,45 @@ impl RenderContext {
             .bind_vertex_buffers(0, self.vertex_buffer.clone())
             .unwrap();
 
+        if let Some(ExternalCommunication {
+            shared_image_descriptor_set,
+            ..
+        }) = self.external.as_mut()
+        {
+            builder
+                .bind_descriptor_sets(
+                    PipelineBindPoint::Graphics,
+                    self.pipeline.layout().clone(),
+                    0,
+                    shared_image_descriptor_set.clone(),
+                )
+                .unwrap();
+        }
+
         let image_extent = self.framebuffers[image_index as usize].extent();
 
-        let perspective = Matrix4::from(PerspectiveFov {
-            fovy: Deg(45.0).into(),
-            aspect: image_extent[0] as f32 / image_extent[1] as f32,
-            near: 0.1,
-            far: 100.0,
-        });
-        let mvp = perspective
-            * Matrix4::look_at_rh(
-                Point3 {
-                    x: time.sin() * 10.0,
-                    y: time.cos() * 10.0,
-                    z: -3.0,
-                },
-                Point3 {
-                    x: 0.0,
-                    y: 0.0,
-                    z: 0.0,
-                },
-                Vector3::unit_z(),
-            );
+        let mut perspective = Mat4::perspective_rh(
+            45f32.to_radians(),
+            image_extent[0] as f32 / image_extent[1] as f32,
+            0.1,
+            100.0,
+        );
+        // glam creates an OpenGL / Direct3D perspective matrix. However, in Vulkan, the vertical
+        // axis in the clip space is flipped (going from the top left to the bottom right instead of
+        // the more familiar bottom left to top right). Therefore, to make this perspective matrix
+        // correct for the Vulkan coordinate system, we flip the second axis component scale,
+        // flipping the y-axis. Note that this in turn will also flip the z-axis.
+        perspective.y_axis.y = -perspective.y_axis.y;
+        let view = Mat4::look_at_rh(
+            Vec3::new(time.sin() * 5.0, 3.0, time.cos() * 5.0),
+            Vec3::ZERO,
+            Vec3::Y,
+        );
+        let mvp = perspective * view;
         let push_constants = vs::FrameData {
             time: time.into(),
-            mvp: mvp.into(),
+            mvp: mvp.to_cols_array_2d(),
         };
-
-        // let push_constants = PushConstant {
-        //     time: params.time.into(),
-        //     mvp: mvp.to_cols_array_2d(),
-        // };
 
         builder
             .push_constants(pipeline_layout.clone(), 0, push_constants)
@@ -890,22 +1081,42 @@ impl RenderContext {
 
         let command_buffer = builder.build().map_err(Validated::unwrap).unwrap();
 
-        if let Some(future) = self.swapchain_fences.get_mut(image_index as usize) {
-            let moved_future = future.take().unwrap();
-            *future = Some(
-                moved_future
-                    .join(acquire_future)
-                    .then_execute(self.queue.clone(), command_buffer)
-                    .unwrap()
-                    .boxed(),
-            );
+        // In case we cought up to our maximum frames-in-flight, finish waiting for the current
+        // frame to finish from last time
+        self.swapchain_fences.get_mut(image_index as usize).take();
+
+        let current_future = if let Some(last_frame_future) = self
+            .swapchain_fences
+            .get_mut(self.last_submitted_swapchain_image_index)
+            .map(Option::take)
+            .flatten()
+        {
+            last_frame_future.join(acquire_future).boxed()
         } else {
-            self.swapchain_fences.push(Some(
-                acquire_future
-                    .then_execute(self.queue.clone(), command_buffer)
-                    .unwrap()
-                    .boxed(),
-            ));
+            acquire_future.boxed()
+        };
+
+        match current_future
+            .then_execute(self.queue.clone(), command_buffer)
+            .unwrap()
+            .then_swapchain_present(
+                self.queue.clone(),
+                SwapchainPresentInfo::swapchain_image_index(self.swapchain.clone(), image_index),
+            )
+            .then_signal_fence_and_flush()
+            .map_err(Validated::unwrap)
+        {
+            Ok(current_future) => {
+                if self.swapchain_fences.len() < image_index as usize + 1 {
+                    self.swapchain_fences.push(Some(current_future.boxed()));
+                } else {
+                    self.swapchain_fences[image_index as usize] = Some(current_future.boxed());
+                }
+
+                self.last_submitted_swapchain_image_index = image_index as usize;
+            }
+            Err(VulkanError::OutOfDate) => unimplemented!(),
+            Err(e) => panic!("Failed to submit new frame: {:?}", e),
         }
     }
 }
