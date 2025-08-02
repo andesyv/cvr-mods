@@ -17,8 +17,8 @@ use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
 use vulkano::descriptor_set::{DescriptorSet, WriteDescriptorSet};
 use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
 use vulkano::device::{
-    Device, DeviceCreateInfo, DeviceExtensions, DeviceProperties, Queue, QueueCreateInfo,
-    QueueFlags,
+    Device, DeviceCreateInfo, DeviceExtensions, DeviceOwned, DeviceProperties, Queue,
+    QueueCreateInfo, QueueFlags,
 };
 use vulkano::format::{ClearColorValue, Format};
 use vulkano::image::sampler::{Filter, Sampler, SamplerCreateInfo};
@@ -298,6 +298,79 @@ fn create_descriptor_set(
     .unwrap()
 }
 
+fn create_graphics_pipeline(
+    device: Arc<Device>,
+    viewport: Viewport,
+    render_pass: Arc<RenderPass>,
+) -> Arc<GraphicsPipeline> {
+    let vs = vs::load(device.clone()).map_err(Validated::unwrap).unwrap();
+    let fs = fs::load(device.clone()).map_err(Validated::unwrap).unwrap();
+
+    let vs_entry_point = vs.entry_point("main").unwrap();
+    let fs_entry_point = fs.entry_point("main").unwrap();
+
+    let vertex_input_state = MeshVertex::per_vertex()
+        .definition(&vs_entry_point)
+        .unwrap();
+
+    let stages = [vs_entry_point, fs_entry_point]
+        .into_iter()
+        .map(PipelineShaderStageCreateInfo::new)
+        .collect();
+
+    let layout = PipelineLayout::new(
+        device.clone(),
+        PipelineDescriptorSetLayoutCreateInfo::from_stages(&stages)
+            .into_pipeline_layout_create_info(device.clone())
+            .unwrap(),
+    )
+    .map_err(Validated::unwrap)
+    .unwrap();
+
+    let subpass = Subpass::from(render_pass, 0).unwrap();
+
+    GraphicsPipeline::new(
+        device,
+        None,
+        GraphicsPipelineCreateInfo {
+            stages,
+            vertex_input_state: Some(vertex_input_state),
+            input_assembly_state: Some(Default::default()),
+            viewport_state: Some(ViewportState {
+                viewports: [viewport].into_iter().collect(),
+                ..Default::default()
+            }),
+            rasterization_state: Some(RasterizationState {
+                cull_mode: CullMode::Back,
+                ..Default::default()
+            }),
+            // depth_stencil_state: Some(DepthStencilState {
+            //     depth: Some(DepthState::simple()),
+            //     ..Default::default()
+            // }),
+            multisample_state: Some(Default::default()),
+            color_blend_state: Some(ColorBlendState::with_attachment_states(
+                subpass.num_color_attachments(),
+                Default::default(),
+            )),
+            subpass: Some(subpass.into()),
+            ..GraphicsPipelineCreateInfo::layout(layout)
+        },
+    )
+    .unwrap()
+}
+
+fn create_perspective(width: u32, height: u32) -> Mat4 {
+    let mut m = Mat4::perspective_rh(45f32.to_radians(), width as f32 / height as f32, 0.1, 100.0);
+    // glam creates an OpenGL / Direct3D perspective matrix. However, in Vulkan, the vertical
+    // axis in the clip space is flipped (going from the top left to the bottom right instead of
+    // the more familiar bottom left to top right). Therefore, to make this perspective matrix
+    // correct for the Vulkan coordinate system, we flip the second axis component scale,
+    // flipping the y-axis. Note that this in turn will also flip the z-axis.
+    m.y_axis.y = -m.y_axis.y;
+    m
+}
+
 mod vs {
     vulkano_shaders::shader! {
         ty: "vertex",
@@ -337,6 +410,7 @@ pub struct RenderContext {
     external: Option<ExternalCommunication>,
     image_descriptor_set: Arc<DescriptorSet>,
     last_submitted_swapchain_image_index: usize,
+    perspective: Mat4,
 }
 
 pub enum DrawResult {
@@ -583,63 +657,8 @@ impl RenderContext {
         )
         .unwrap();
 
-        let vs = vs::load(device.clone()).map_err(Validated::unwrap).unwrap();
-        let fs = fs::load(device.clone()).map_err(Validated::unwrap).unwrap();
-
-        let vs_entry_point = vs.entry_point("main").unwrap();
-        let fs_entry_point = fs.entry_point("main").unwrap();
-
-        let vertex_input_state = MeshVertex::per_vertex()
-            .definition(&vs_entry_point)
-            .unwrap();
-
-        let stages = [vs_entry_point, fs_entry_point]
-            .into_iter()
-            .map(PipelineShaderStageCreateInfo::new)
-            .collect();
-
-        let layout = PipelineLayout::new(
-            device.clone(),
-            PipelineDescriptorSetLayoutCreateInfo::from_stages(&stages)
-                .into_pipeline_layout_create_info(device.clone())
-                .unwrap(),
-        )
-        .map_err(Validated::unwrap)
-        .unwrap();
-
         let (framebuffers, viewport) = create_framebuffers(&swapchain_images, &render_pass);
-        let subpass = Subpass::from(render_pass, 0).unwrap();
-
-        let pipeline = GraphicsPipeline::new(
-            device.clone(),
-            None,
-            GraphicsPipelineCreateInfo {
-                stages,
-                vertex_input_state: Some(vertex_input_state),
-                input_assembly_state: Some(Default::default()),
-                viewport_state: Some(ViewportState {
-                    viewports: [viewport].into_iter().collect(),
-                    ..Default::default()
-                }),
-                rasterization_state: Some(RasterizationState {
-                    cull_mode: CullMode::Back,
-                    ..Default::default()
-                }),
-                // depth_stencil_state: Some(DepthStencilState {
-                //     depth: Some(DepthState::simple()),
-                //     ..Default::default()
-                // }),
-                multisample_state: Some(Default::default()),
-                color_blend_state: Some(ColorBlendState::with_attachment_states(
-                    subpass.num_color_attachments(),
-                    Default::default(),
-                )),
-                subpass: Some(subpass.into()),
-                ..GraphicsPipelineCreateInfo::layout(layout)
-            },
-        )
-        .map_err(Validated::unwrap)
-        .unwrap();
+        let pipeline = create_graphics_pipeline(device.clone(), viewport, render_pass);
 
         let command_buffer_allocator = Arc::new(StandardCommandBufferAllocator::new(
             device.clone(),
@@ -771,6 +790,7 @@ impl RenderContext {
             external,
             image_descriptor_set,
             last_submitted_swapchain_image_index: 0,
+            perspective: create_perspective(dimensions[0], dimensions[1]),
         }
     }
 
@@ -846,26 +866,12 @@ impl RenderContext {
             )
             .unwrap();
 
-        let image_extent = self.framebuffers[image_index as usize].extent();
-
-        let mut perspective = Mat4::perspective_rh(
-            45f32.to_radians(),
-            image_extent[0] as f32 / image_extent[1] as f32,
-            0.1,
-            100.0,
-        );
-        // glam creates an OpenGL / Direct3D perspective matrix. However, in Vulkan, the vertical
-        // axis in the clip space is flipped (going from the top left to the bottom right instead of
-        // the more familiar bottom left to top right). Therefore, to make this perspective matrix
-        // correct for the Vulkan coordinate system, we flip the second axis component scale,
-        // flipping the y-axis. Note that this in turn will also flip the z-axis.
-        perspective.y_axis.y = -perspective.y_axis.y;
         let view = Mat4::look_at_rh(
             Vec3::new(time.sin() * 5.0, 3.0, time.cos() * 5.0),
             Vec3::ZERO,
             Vec3::Y,
         );
-        let mvp = perspective * view;
+        let mvp = self.perspective * view;
         let push_constants = vs::FrameData {
             time: time.into(),
             mvp: mvp.to_cols_array_2d(),
@@ -950,5 +956,38 @@ impl RenderContext {
         } else {
             DrawResult::Ok
         }
+    }
+
+    pub fn recreate_swapchain(&mut self, width: u32, height: u32) {
+        // First, we need to synchronize the CPU and the GPU by waiting for the frames-in-flight
+        self.swapchain_fences.clear();
+
+        // First, fetch the device from the current swapchain
+        let device = self.swapchain.device().clone();
+
+        // Use the convenient vulkano::Swapchain::recreate function for recreating the swapchain
+        let (swapchain, swapchain_images) = self
+            .swapchain
+            .recreate(SwapchainCreateInfo {
+                image_extent: [width, height],
+                ..self.swapchain.create_info()
+            })
+            .expect("Failed to recreate swapchain");
+        if swapchain_images.is_empty() {
+            panic!("Swapchain contains no images");
+        }
+
+        self.swapchain = swapchain;
+
+        // Fetch the render pass from the current framebuffer (and keep it alive)
+        let render_pass = self.framebuffers.first().unwrap().render_pass().clone();
+
+        let (framebuffers, viewport) = create_framebuffers(&swapchain_images[..], &render_pass);
+
+        self.framebuffers = framebuffers;
+
+        // Finally, recreate the graphics pipeline as well as that one makes use of the viewport
+        self.pipeline = create_graphics_pipeline(device, viewport, render_pass);
+        self.perspective = create_perspective(width, height);
     }
 }

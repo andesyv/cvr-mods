@@ -285,8 +285,6 @@ impl MemoryExporter {
                 .send(&format_semaphore_handle(identifier, &file), &file);
             self.handles.push(file);
         }
-
-        // TODO: In owner-process, use pidfd_getfd to duplicate (steal) the handle
     }
 
     #[cfg(windows)]

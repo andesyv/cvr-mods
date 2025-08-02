@@ -15,6 +15,7 @@ pub struct Window {
     inner_window: Option<Arc<winit::window::Window>>,
     context_creation_info: RenderContextCreationInfo,
     context: Option<RenderContext>,
+    swapchain_outdated: bool,
     app_timer: Instant,
 }
 
@@ -25,6 +26,7 @@ impl Window {
             inner_window: None,
             context_creation_info: render_context_creation_info,
             context: None,
+            swapchain_outdated: false,
             app_timer: Instant::now(),
         }
     }
@@ -88,14 +90,25 @@ impl ApplicationHandler for Window {
                     DrawResult::WaitingForHost => {
                         self.inner_window.as_ref().unwrap().request_redraw()
                     }
-                    DrawResult::HostDisconnected => self.close_requested = true,
-                    // DrawResult::SwapchainOutdated => {} // TODO
+                    DrawResult::HostDisconnected => {
+                        self.close_requested = true;
+                        return;
+                    }
+                    DrawResult::SwapchainOutdated => self.swapchain_outdated = true,
                     _ => (),
                 }
+
+                if self.swapchain_outdated {
+                    self.context
+                        .as_mut()
+                        .unwrap()
+                        .recreate_swapchain(width, height);
+                    self.swapchain_outdated = false;
+                }
             }
-            // WindowEvent::Resized(_) => {
-            //
-            // }
+            WindowEvent::Resized(_) => {
+                self.swapchain_outdated = true;
+            }
             _ => (),
         }
     }
