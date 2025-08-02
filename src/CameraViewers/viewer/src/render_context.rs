@@ -5,6 +5,7 @@ use crate::platform::{
 };
 use glam::{Mat4, Vec3};
 use std::sync::Arc;
+use uuid::Uuid;
 use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer};
 use vulkano::command_buffer::allocator::{CommandBufferAllocator, StandardCommandBufferAllocator};
 use vulkano::command_buffer::{
@@ -12,14 +13,12 @@ use vulkano::command_buffer::{
     SubmitInfo,
 };
 use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
-use vulkano::descriptor_set::{DescriptorSet, WriteDescriptorSet};
+use vulkano::descriptor_set::{DescriptorImageViewInfo, DescriptorSet, WriteDescriptorSet};
 use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
-use vulkano::device::{
-    Device, DeviceCreateInfo, DeviceExtensions, Queue, QueueCreateInfo, QueueFlags,
-};
+use vulkano::device::{Device, DeviceCreateInfo, DeviceExtensions, DeviceProperties, Queue, QueueCreateInfo, QueueFlags};
 use vulkano::image::sampler::{Filter, Sampler, SamplerCreateInfo};
 use vulkano::image::view::ImageView;
-use vulkano::image::{Image, ImageUsage};
+use vulkano::image::{Image, ImageLayout, ImageUsage};
 use vulkano::instance::{Instance, InstanceCreateInfo};
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
 use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
@@ -28,13 +27,15 @@ use vulkano::pipeline::graphics::rasterization::{CullMode, RasterizationState};
 use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition};
 use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
 use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
-use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout, PipelineShaderStageCreateInfo};
+use vulkano::pipeline::{
+    GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout, PipelineShaderStageCreateInfo,
+};
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass};
 use vulkano::swapchain::{
     Surface, Swapchain, SwapchainCreateInfo, SwapchainPresentInfo, acquire_next_image,
 };
-use vulkano::sync::GpuFuture;
 use vulkano::sync::semaphore::Semaphore;
+use vulkano::sync::{GpuFuture, PipelineStages};
 use vulkano::{Validated, VulkanError, VulkanLibrary};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::Window;
@@ -60,6 +61,10 @@ pub const DEVICE_EXTENSIONS: DeviceExtensions = DeviceExtensions {
     khr_external_semaphore_fd: true,
     khr_external_fence: true,
     khr_external_fence_fd: true,
+    // Eliminates the use for image layer transitions. However, it's not a part of Vulkano
+    // (or probably any driver) yet:
+    // https://www.khronos.org/blog/so-long-image-layouts-simplifying-vulkan-synchronisation
+    // khr_unified_image_layouts: true,
     ..DeviceExtensions::empty()
 };
 
@@ -176,14 +181,43 @@ fn create_instance(event_loop: &ActiveEventLoop) -> Arc<Instance> {
 //     .unwrap()
 // }
 
+fn matches_target_driver_and_devices(target_driver: &Option<Uuid>, target_devices: &[Uuid], properties: &DeviceProperties) -> bool {
+    if target_driver.is_none() && target_devices.is_empty() {
+        return true;
+    }
+
+    match properties.driver_uuid.map(Uuid::from_bytes) {
+        // driver cannot be determined by Vulkan and thus definitively does not match
+        None => return false,
+        Some(candidate_driver) if candidate_driver != target_driver.unwrap() => return false,
+        _ => (),
+    }
+
+    match properties.device_uuid.map(Uuid::from_bytes) {
+        // device cannot be determined by Vulkan and thus definitively does not match
+        None => return false,
+        Some(candidate_device) if !target_devices.contains(&candidate_device) => return false,
+        _ => (),
+    }
+
+    true
+}
+
 fn find_physical_device_and_queue_family(
     instance: Arc<Instance>,
     surface: &Surface,
+    target_driver: Option<Uuid>,
+    target_devices: Vec<Uuid>,
 ) -> Option<(Arc<PhysicalDevice>, u32)> {
     instance
         .enumerate_physical_devices()
         .ok()?
         .filter_map(|d| {
+            // Filter on driver and devices
+            if !matches_target_driver_and_devices(&target_driver, &target_devices, &d.properties()) {
+                return None;
+            }
+
             if d.supported_extensions().contains(&DEVICE_EXTENSIONS) {
                 d.queue_family_properties()
                     .iter()
@@ -310,8 +344,15 @@ fn create_descriptor_set(
         descriptor_set_allocator,
         layout.clone(),
         [
-            WriteDescriptorSet::sampler(0, sampler),
-            WriteDescriptorSet::image_view(1, image_view),
+            WriteDescriptorSet::image_view_sampler(0, image_view, sampler),
+            // WriteDescriptorSet::sampler(0, sampler),
+            // WriteDescriptorSet::image_view(1, image_view),
+            // WriteDescriptorSet::image_view_with_layout_array(1,
+            //                                                  0,
+            //                                                  [DescriptorImageViewInfo {
+            //                                                      image_view,
+            //                                                      image_layout: ImageLayout::ShaderReadOnlyOptimal,
+            //                                                  }]),
         ],
         [],
     )
@@ -346,13 +387,16 @@ mod fs {
 
             layout(location = 0) in vec2 uv;
 
-            layout(set = 0, binding = 0) uniform sampler s;
-            layout(set = 0, binding = 1) uniform texture2D tex;
+            // layout(set = 0, binding = 0) uniform sampler s;
+            // layout(set = 0, binding = 1) uniform texture2D tex;
+            // Combined image and sampler:
+            layout(binding = 0) uniform sampler2D s;
 
             layout(location = 0) out vec4 frag_colour;
 
             void main() {
-                frag_colour = vec4(texture(sampler2D(tex, s), uv).rgb, 1.0);
+                // frag_colour = vec4(texture(sampler2D(tex, s), uv).rgb, 1.0);
+                frag_colour = vec4(texture(s, uv).rgb, 1.0);
                 // frag_colour = vec4(uv, 0.0, 1.0);
             }
             "
@@ -362,9 +406,15 @@ mod fs {
 struct ExternalCommunication {
     begin_sem: Arc<Semaphore>,
     end_sem: Arc<Semaphore>,
-    shared_image: ExternalImage,
     host_process_semaphore: IPCSemaphore,
     shared_image_descriptor_set: Arc<DescriptorSet>,
+}
+
+#[derive(Default)]
+pub struct RenderContextCreationInfo {
+    pub driver: Option<Uuid>,
+    pub devices: Vec<Uuid>,
+    pub owner_channel: Option<IPCChannel>,
 }
 
 pub struct RenderContext {
@@ -385,15 +435,20 @@ impl RenderContext {
         event_loop: &ActiveEventLoop,
         window: Arc<Window>,
         dimensions: [u32; 2],
-        owner_channel: Option<IPCChannel>,
+        creation_info: RenderContextCreationInfo,
     ) -> Self {
         let instance = create_instance(event_loop);
         let api_version = instance.api_version();
         // let _debug_messenger = unsafe { window::create_debug_messenger(&instance) };
 
         let surface = Surface::from_window(instance.clone(), window).unwrap();
-        let (physical_device, queue_family_index) =
-            find_physical_device_and_queue_family(instance, &surface).unwrap();
+        let (physical_device, queue_family_index) = find_physical_device_and_queue_family(
+            instance,
+            &surface,
+            creation_info.driver,
+            creation_info.devices,
+        )
+        .unwrap();
 
         if cfg!(debug_assertions) {
             println!(
@@ -441,7 +496,6 @@ impl RenderContext {
         .unwrap();
 
         // Cube vertex data
-        // TODO: Fix texture coordinates
         pub const CUBE_VERTICES: [MeshVertex; 36] = [
             // Front
             MeshVertex {
@@ -668,9 +722,14 @@ impl RenderContext {
         .map_err(Validated::unwrap)
         .unwrap();
 
+        let command_buffer_allocator = Arc::new(StandardCommandBufferAllocator::new(
+            device.clone(),
+            Default::default(),
+        ));
+
         // Logic taken from https://github.com/vulkano-rs/vulkano/blob/master/examples/gl-interop/main.rs
         // (which is based on https://github.com/KhronosGroup/Vulkan-Samples/blob/main/samples/extensions/open_gl_interop/open_gl_interop.cpp)
-        let external = if let Some(channel) = owner_channel {
+        let external = if let Some(channel) = creation_info.owner_channel {
             let semaphore_handle_type = get_external_semaphore_type(&physical_device).unwrap();
             let memory_handle_type = get_external_memory_type(
                 &physical_device,
@@ -688,6 +747,8 @@ impl RenderContext {
             let shared_image = ExternalImage::new(
                 device.clone(),
                 &memory_allocator,
+                &command_buffer_allocator,
+                &queue,
                 dimensions,
                 memory_handle_type,
             )
@@ -712,14 +773,12 @@ impl RenderContext {
                 memory_handle_type,
             );
             let host_process_semaphore = memory_exporter.flush_and_transform_to_semaphore();
-            let image_view = (&shared_image).try_into().unwrap();
-
+            let image_view = ImageView::new_default(shared_image.into()).unwrap();
             let shared_image_descriptor_set = create_descriptor_set(&pipeline, &device, image_view);
 
             Some(ExternalCommunication {
                 begin_sem,
                 end_sem,
-                shared_image,
                 host_process_semaphore,
                 shared_image_descriptor_set,
             })
@@ -727,11 +786,6 @@ impl RenderContext {
             println!("Running without an attached host process (a.k.a. debug mode)");
             None
         };
-
-        let command_buffer_allocator = Arc::new(StandardCommandBufferAllocator::new(
-            device,
-            Default::default(),
-        ));
 
         Self {
             pipeline,
@@ -973,7 +1027,10 @@ impl RenderContext {
                 .with(|mut q| unsafe {
                     q.submit_unchecked(
                         &[SubmitInfo {
-                            wait_semaphores: vec![SemaphoreSubmitInfo::new(begin_sem.clone())],
+                            wait_semaphores: vec![SemaphoreSubmitInfo {
+                                stages: PipelineStages::FRAGMENT_SHADER,
+                                ..SemaphoreSubmitInfo::new(begin_sem.clone())
+                            }],
                             ..Default::default()
                         }],
                         None,
@@ -1013,7 +1070,7 @@ impl RenderContext {
         builder
             .begin_render_pass(
                 RenderPassBeginInfo {
-                    clear_values: vec![Some([0.0, 0.0, 0.0, 1.0].into())],
+                    clear_values: vec![Some([0.0, 0.15, 0.2, 1.0].into())],
                     ..RenderPassBeginInfo::framebuffer(
                         self.framebuffers[image_index as usize].clone(),
                     )

@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::platform::IPCChannel;
-use crate::render_context::RenderContext;
+use crate::render_context::{RenderContext, RenderContextCreationInfo};
 use crate::{HEIGHT, WIDTH};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
@@ -14,19 +14,19 @@ use winit::window::WindowId;
 pub struct Window {
     close_requested: bool,
     inner_window: Option<Arc<winit::window::Window>>,
+    context_creation_info: RenderContextCreationInfo,
     context: Option<RenderContext>,
     app_timer: Instant,
-    pub channel: Option<IPCChannel>,
 }
 
-impl Default for Window {
-    fn default() -> Self {
+impl Window {
+    pub fn new(render_context_creation_info: RenderContextCreationInfo) -> Self {
         Self {
             close_requested: false,
             inner_window: None,
+            context_creation_info: render_context_creation_info,
             context: None,
             app_timer: Instant::now(),
-            channel: None,
         }
     }
 }
@@ -46,7 +46,7 @@ impl ApplicationHandler for Window {
             event_loop,
             window,
             [WIDTH, HEIGHT],
-            std::mem::take(&mut self.channel),
+            std::mem::take(&mut self.context_creation_info),
         ));
         if cfg!(debug_assertions) {
             println!(

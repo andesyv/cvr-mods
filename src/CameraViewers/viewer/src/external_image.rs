@@ -1,8 +1,15 @@
+use crate::platform::NativeManagedHandle;
 use std::sync::Arc;
-use vulkano::image::view::ImageView;
-use vulkano::image::{Image, ImageMemory, ImageType};
+use vulkano::command_buffer::allocator::CommandBufferAllocator;
+use vulkano::command_buffer::{
+    AutoCommandBufferBuilder, ClearColorImageInfo, CommandBufferUsage, PrimaryCommandBufferAbstract,
+};
+use vulkano::device::Queue;
+use vulkano::format::ClearColorValue;
+use vulkano::image::{Image, ImageLayout, ImageMemory, ImageType};
 use vulkano::memory::allocator::MemoryTypeFilter;
 use vulkano::memory::{MemoryAllocateInfo, ResourceMemory};
+use vulkano::sync::GpuFuture;
 use vulkano::{
     DeviceSize, Validated, VulkanError,
     device::Device,
@@ -15,7 +22,6 @@ use vulkano::{
         DedicatedAllocation, DeviceMemory, ExternalMemoryHandleType, allocator::MemoryAllocator,
     },
 };
-use crate::platform::NativeManagedHandle;
 
 #[derive(Debug)]
 pub struct ExternalImage {
@@ -31,15 +37,24 @@ impl From<&ExternalImage> for Arc<Image> {
     }
 }
 
+impl From<ExternalImage> for Arc<Image> {
+    fn from(image: ExternalImage) -> Self {
+        image.inner
+    }
+}
+
 impl ExternalImage {
-    pub fn new<M>(
+    pub fn new<M, C>(
         device: Arc<Device>,
         memory_allocator: &M,
+        command_buffer_allocator: &Arc<C>,
+        queue: &Arc<Queue>,
         dimensions: [u32; 2],
         handle_type: ExternalMemoryHandleType,
     ) -> Result<Self, ExternalImageError>
     where
         M: MemoryAllocator,
+        C: CommandBufferAllocator,
     {
         let raw_image = RawImage::new(
             device.clone(),
@@ -48,6 +63,7 @@ impl ExternalImage {
                 image_type: ImageType::Dim2d,
                 format: Format::R16G16B16A16_UNORM,
                 extent: [dimensions[0], dimensions[1], 1],
+                // usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED | ImageUsage::COLOR_ATTACHMENT,
                 usage: ImageUsage::TRANSFER_SRC | ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
                 external_memory_handle_types: handle_type.into(),
                 ..Default::default()
@@ -85,6 +101,27 @@ impl ExternalImage {
                 .map_err(|(err, _, _)| err.unwrap())?,
         );
 
+        // External images need to have its memory initialised immediately as they may be
+        // externally written.
+        // let mut builder = AutoCommandBufferBuilder::primary(
+        //     command_buffer_allocator.clone(),
+        //     queue.queue_family_index(),
+        //     CommandBufferUsage::OneTimeSubmit,
+        // )
+        // .map_err(Validated::unwrap)
+        // .unwrap();
+        //
+        // builder
+        //     .clear_color_image(ClearColorImageInfo {
+        //         clear_value: ClearColorValue::Float([1.0, 0.0, 1.0, 1.0]),
+        //         image_layout: ImageLayout::General,
+        //         ..ClearColorImageInfo::image(image.clone())
+        //     })
+        //     .unwrap();
+        // let command_buffer = builder.build().unwrap();
+        // let future = command_buffer.execute(queue.clone()).unwrap();
+        // future.flush().unwrap();
+
         Ok(Self {
             inner: image,
             handle_type,
@@ -96,15 +133,14 @@ impl ExternalImage {
         memory: &DeviceMemory,
         handle_type: ExternalMemoryHandleType,
     ) -> Result<NativeManagedHandle, VulkanError> {
-        use vulkano::VulkanObject;
-        use std::mem::MaybeUninit;
         use ash::vk::MemoryGetWin32HandleInfoKHR;
-        use windows::Win32::Foundation::HANDLE;
+        use std::mem::MaybeUninit;
+        use vulkano::VulkanObject;
         use vulkano::device::DeviceOwned;
+        use windows::Win32::Foundation::HANDLE;
 
         // VUID-VkMemoryGetFdInfoKHR-handleType-parameter
         // handle_type.validate_device(memory.device())?; // Private function. Probably fine...
-
 
         // VUID-VkMemoryGetFdInfoKHR-handleType-00672
 
@@ -164,7 +200,10 @@ impl ExternalImage {
         memory: &DeviceMemory,
         handle_type: ExternalMemoryHandleType,
     ) -> Result<NativeManagedHandle, VulkanError> {
-        memory.export_fd(handle_type).map_err(Validated::unwrap)
+        assert_eq!(handle_type, ExternalMemoryHandleType::OpaqueFd);
+        memory
+            .export_fd(ExternalMemoryHandleType::OpaqueFd)
+            .map_err(Validated::unwrap)
     }
 
     fn get_device_memory(&self) -> &DeviceMemory {
@@ -187,11 +226,9 @@ impl ExternalImage {
     pub fn format(&self) -> Format {
         self.inner.format()
     }
-}
 
-impl TryFrom<&ExternalImage> for Arc<ImageView> {
-    type Error = VulkanError;
-    fn try_from(value: &ExternalImage) -> Result<Self, Self::Error> {
-        ImageView::new_default(value.inner.clone()).map_err(Validated::unwrap)
+    pub fn dimensions(&self) -> (u32, u32) {
+        let extent = self.inner.extent();
+        (extent[0], extent[1])
     }
 }

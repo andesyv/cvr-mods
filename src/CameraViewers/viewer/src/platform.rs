@@ -142,7 +142,7 @@ fn format_semaphore_handle(identifier: &str, handle: &NativeManagedHandle) -> St
         "OpaqueFd"
     };
     format!(
-        "Connection data: {{\"semaphore\", \"{}\", handle type: \"{}\", \"{}\"}}",
+        "Connection data: {{ type: \"semaphore\", identifier: \"{}\", handle type: \"{}\", handle id: \"{}\" }}",
         identifier,
         HANDLE_TYPE,
         format_handle(handle)
@@ -155,11 +155,14 @@ fn format_memory_handle(identifier: &str, image: &ExternalImage, handle: &Native
     } else {
         "OpaqueFd"
     };
+    let (width, height) = image.dimensions();
     format!(
-        "Connection data: {{\"image\", \"{}\", handle type: \"{}\", \"{}\", size: \"{}\", format: \"{:?}\" }}",
+        "Connection data: {{ type: \"image\", identifier: \"{}\", handle type: \"{}\", handle id: \"{}\", width: \"{}\", height: \"{}\", size: \"{}\", format: \"{:?}\" }}",
         identifier,
         HANDLE_TYPE,
         format_handle(handle),
+        width,
+        height,
         image.device_memory_allocation_size(),
         image.format()
     )

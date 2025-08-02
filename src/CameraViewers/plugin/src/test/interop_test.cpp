@@ -43,6 +43,14 @@ struct ConnectionData
     Image
   };
 
+  struct ImageData
+  {
+    std::uint32_t width;
+    std::uint32_t height;
+    std::size_t memory_allocation_size;
+    std::string memory_format;
+  };
+
   Type type;
   std::string identifier;
 #ifdef _WIN32
@@ -51,8 +59,7 @@ struct ConnectionData
   int handle;
 #endif
   std::string handle_type;
-  std::optional<std::size_t> memory_allocation_size;
-  std::optional<std::string> memory_image_format;
+  std::optional<ImageData> image_data;
 };
 
 std::vector<ConnectionData> parse_connection_data_from_child_output(std::string_view child_output)
@@ -105,15 +112,22 @@ std::vector<ConnectionData> parse_connection_data_from_child_output(std::string_
     const int handle = std::stoi(sub_matches.at(3));
 #endif
 
+    const auto type{ sub_matches.at(0) == "semaphore" ? ConnectionData::Type::Semaphore : ConnectionData::Type::Image};
+    const bool has_image_data = 3 + 4 < sub_matches.size();
+    if (type == ConnectionData::Type::Image && !has_image_data)
+      throw std::runtime_error{ "Image connection data is missing required fields (width, height, memory allocation size, memory image format)" };
+
     data.push_back(ConnectionData{
-      .type = sub_matches.at(0) == "semaphore" ? ConnectionData::Type::Semaphore : ConnectionData::Type::Image,
+      .type = type,
       .identifier = sub_matches.at(1),
       .handle = handle,
       .handle_type = sub_matches.at(2),
-      .memory_allocation_size = 4 < sub_matches.size()
-                                  ? std::make_optional<std::size_t>(std::stoull(sub_matches.at(4)))
-                                  : std::nullopt,
-      .memory_image_format = 5 < sub_matches.size() ? std::make_optional(sub_matches.at(5)) : std::nullopt,
+      .image_data = has_image_data ? std::optional{ConnectionData::ImageData{
+        .width = static_cast<std::uint32_t>(std::stoul(sub_matches.at(4))),
+        .height = static_cast<std::uint32_t>(std::stoul(sub_matches.at(5))),
+        .memory_allocation_size = std::stoull(sub_matches.at(6)),
+        .memory_format = sub_matches.at(7),
+      }} : std::nullopt,
     });
   }
 
@@ -131,6 +145,30 @@ void print_child_pipe(std::string_view child_string_output)
     return std::string_view{subrange.begin(), subrange.end()};
   }))
     std::cout << "\t\t" << line << std::endl;
+}
+
+template <std::convertible_to<std::uint8_t> T>
+requires (sizeof(T) == 1)
+std::string serialize_uuid(const std::array<T, 16>& bytes)
+{
+  constexpr static std::string_view lookup = "0123456789abcdef";
+
+  std::string out;
+  out.reserve(16 + 4); // 16 characters + 4 hyphens
+  for (std::size_t i{ 0 }, j{ 0 }; j < bytes.size(); ++i, ++j)
+  {
+    if (i == 4 || i == 6 + 1 || i == 8 + 2 || i == 10 + 3)
+    {
+      out.push_back('-');
+      --j;
+      continue;
+    }
+
+    out.push_back(lookup.at(static_cast<std::uint8_t>(bytes[j]) / 16));
+    out.push_back(lookup.at(static_cast<std::uint8_t>(bytes[j]) % 16));
+  }
+
+  return out;
 }
 
 #ifdef _WIN32
@@ -546,13 +584,13 @@ public:
     return *this;
   }
 
-  explicit ChildProcess(const std::string& socket_addr_path)
+  explicit ChildProcess(const std::string& socket_addr_path, std::string_view driver_and_devices)
   {
     // The current thread will block while waiting for incoming socket connections. So for debugging purposes we start
     // and observe the child process in a separate thread so we can pipe its output to the standard output
-    return_code = std::async(std::launch::async, [this, socket_addr_path]
+    return_code = std::async(std::launch::async, [this, socket_addr_path, driver_and_devices = std::string{ driver_and_devices }]
     {
-      const std::string cmd{std::format("{} {}", VIEWER_PATH, socket_addr_path)};
+      const std::string cmd{std::format("{} \"{}\" {}", VIEWER_PATH, driver_and_devices, socket_addr_path)};
       auto child_std_output = popen(cmd.c_str(), "r");
       if (child_std_output == nullptr)
       {
@@ -605,7 +643,7 @@ public:
   }
 };
 
-std::optional<std::tuple<std::vector<ConnectionData>, ChildProcess, IPCSemaphore>> init_child_process_and_fetch_connection_data()
+std::optional<std::tuple<std::vector<ConnectionData>, ChildProcess, IPCSemaphore>> init_child_process_and_fetch_connection_data(std::string_view driver_and_devices)
 {
   // Create a temp path we will use for the socket connection
   std::error_code ec;
@@ -655,7 +693,7 @@ std::optional<std::tuple<std::vector<ConnectionData>, ChildProcess, IPCSemaphore
     return {};
   }
 
-  ChildProcess child_process{ socket_addr_path.string() };
+  ChildProcess child_process{ socket_addr_path.string(), driver_and_devices };
 
   std::cout << "Waiting for child process..." << std::endl;
   int client_fd = accept(server_fd, nullptr, nullptr); // Blocks until a connection is made
@@ -672,7 +710,7 @@ std::optional<std::tuple<std::vector<ConnectionData>, ChildProcess, IPCSemaphore
   // Read some test data from child
   std::vector<ConnectionData> connection_data{};
   {
-    std::array<char, 128> buffer{};
+    std::array<char, 256> buffer{};
     int file_fd{-1};
     // Read a maximum of 3 connection data messages
     for (unsigned int i{ 0 }; i < 3; ++i)
@@ -746,6 +784,13 @@ std::pair<Semaphore, Semaphore> create_semaphores_from_connection_data(
   return {std::move(begin), std::move(end)};
 }
 
+constexpr GLenum format_from_vk_format(std::string_view vk_format)
+{
+  if (vk_format == "R16G16B16A16_UNORM")
+    return GL_RGBA16;
+  std::unreachable();
+}
+
 std::unique_ptr<ExternalTexture> create_texture_from_connection_data(const std::vector<ConnectionData>& connection_data)
 {
   for (const auto& data : connection_data)
@@ -753,35 +798,38 @@ std::unique_ptr<ExternalTexture> create_texture_from_connection_data(const std::
     if (data.type != ConnectionData::Type::Image)
       continue;
 
+    if (!data.image_data.has_value())
+      throw std::logic_error{"Image data is missing"};
+
+    const auto& image_data{ *data.image_data };
+
     GLuint texture_id, memory_id;
     glCreateMemoryObjectsEXT(1, &memory_id);
-    if (!data.memory_allocation_size)
-      throw std::logic_error{"Memory connection data requires a memory allocation size"};
 #ifdef _WIN32
     if (data.handle_type != "OpaqueWin32")
       throw std::logic_error{"Handle type is not implemented"};
-    glImportMemoryWin32HandleEXT(memory_id, *data.memory_allocation_size, GL_HANDLE_TYPE_OPAQUE_WIN32_EXT, data.handle);
+    glImportMemoryWin32HandleEXT(memory_id, image_data.memory_allocation_size, GL_HANDLE_TYPE_OPAQUE_WIN32_EXT, data.handle);
 #elif __linux__
     if (data.handle_type != "OpaqueFd")
       throw std::logic_error{"Handle type is not implemented"};
-    glImportMemoryFdEXT(memory_id, *data.memory_allocation_size, GL_HANDLE_TYPE_OPAQUE_FD_EXT, data.handle);
+    glImportMemoryFdEXT(memory_id, image_data.memory_allocation_size, GL_HANDLE_TYPE_OPAQUE_FD_EXT, data.handle);
 #endif
+
+    if (!glIsMemoryObjectEXT(memory_id))
+      throw std::runtime_error{"Failed to create external memory object!"};
 
     glGenTextures(1, &texture_id);
     glBindTexture(GL_TEXTURE_2D, texture_id);
 
     // GLuint texture, GLsizei levels, GLenum internalFormat, GLsizei width, GLsizei height, GLuint memory, GLuint64 offset
-    if (data.memory_image_format != "R16G16B16A16_UNORM")
-      throw std::logic_error{"Unsupported format"};
-    glTextureStorageMem2DEXT(texture_id, 1, GL_RGBA16UI, WIDTH, HEIGHT, memory_id, 0);
+    glTextureStorageMem2DEXT(texture_id, 1, format_from_vk_format(image_data.memory_format),
+                             static_cast<GLsizei>(image_data.width), static_cast<GLsizei>(image_data.height), memory_id,
+                             0);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glBindTexture(GL_TEXTURE_2D, 0);
 
-    if (!glIsMemoryObjectEXT(texture_id))
-      throw std::runtime_error{"Failed to create external memory object!"};
-
-    return std::make_unique<ExternalTexture>(texture_id, memory_id);
+    return std::make_unique<ExternalTexture>(texture_id, memory_id, static_cast<GLsizei>(image_data.width), static_cast<GLsizei>(image_data.height));
   }
 
   return {};
@@ -864,6 +912,26 @@ int main()
   }
 #endif
 
+  // Fetch driver and devices
+  std::string driver_and_devices;
+  {
+    std::stringstream ss;
+    std::array<GLubyte, 16> driver_uuid{};
+    glGetUnsignedBytevEXT(GL_DRIVER_UUID_EXT, driver_uuid.data());
+    ss << "driver: " << serialize_uuid(driver_uuid) << ", devices: ";
+    GLint num_devices{ 0 };
+    glGetIntegerv(GL_NUM_DEVICE_UUIDS_EXT, &num_devices);
+    for (GLuint i{ 0 }; i < num_devices; ++i)
+    {
+      std::array<GLubyte, 16> device_uuid{};
+      glGetUnsignedBytei_vEXT(GL_DEVICE_UUID_EXT, i, device_uuid.data());
+      ss << serialize_uuid(device_uuid);
+      if (i != num_devices - 1)
+        ss << ",";
+    }
+    driver_and_devices = ss.str();
+  }
+  std::cout << driver_and_devices << std::endl;
 
   glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
   glDebugMessageCallback([](GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length,
@@ -939,7 +1007,7 @@ int main()
     std::vector<ConnectionData> connection_data{};
     ChildProcess child_process;
     IPCSemaphore child_process_semaphore{};
-    if (auto result{ init_child_process_and_fetch_connection_data() })
+    if (auto result{ init_child_process_and_fetch_connection_data(driver_and_devices) })
     {
       connection_data = std::move(std::get<0>(*result));
       child_process = std::move(std::get<1>(*result));
@@ -969,8 +1037,6 @@ int main()
 
     glUseProgram(shader->id);
     auto plane{create_plane()};
-
-    Framebuffer shared_texture_framebuffer{*shared_texture};
 
     glEnable(GL_CULL_FACE);
     glDisable(GL_DEPTH_TEST);
@@ -1007,40 +1073,38 @@ int main()
       };
       const auto mvp{glm::inverse(p_mat * v_mat)};
 
-      // Wait for rendering to be ready
-      child_process_semaphore.wait();
-      begin_semaphore.wait(*shared_texture);
-      std::cout << "Host started rendering" << std::endl;
-      // glFlush();
-
+      // We don't have to do any synchronisation to set up the global GL drawing state:
+      Framebuffer shared_texture_framebuffer{ *shared_texture };
       shared_texture_framebuffer.bind();
-      glClearColor(0.2f, 0.3f, t, 1.0f);
-      glClear(GL_COLOR_BUFFER_BIT);
-
+      glClearColor(0.2f, 0.3f, t - std::floor(t), 1.0f);
       glUniformMatrix4fv(0, 1, GL_FALSE, glm::value_ptr(mvp));
       glUniform1f(1, t * 3.0);
 
-      glDrawArrays(GL_TRIANGLES, 0, 6);
-      shared_texture_framebuffer.unbind();
+      // Wait for rendering to be ready
+      child_process_semaphore.wait();
+      begin_semaphore.wait(*shared_texture);
+      glFlush(); // Probably not necessary (as client will be blocked), but just in case
+      std::cout << "Host started rendering" << std::endl;
+
+      glClear(GL_COLOR_BUFFER_BIT);
+      // glDrawArrays(GL_TRIANGLES, 0, 6);
+
+      // Blit the framebuffer to the screen for debugging:
+      shared_texture_framebuffer.blit_to_screen();
 
       // Signal the Vulkan app that OpenGL rendering is done
       std::cout << "Host done rendering" << std::endl;
       end_semaphore.signal(*shared_texture);
-
       // OpenGL usually chooses itself when to flush commands to the GPU, but since the Vulkan implementation
       // is waiting for synchronization from OpenGL we need to explicitly flush commands to the GPU every frame.
-      glFlush();
+      glFinish(); // glFlush();
       child_process_semaphore.signal();
 
       // Draw an additional time directly to the screen to verify what's being passed to the viewer program corresponds
       // with what was written
-      glClearColor(0.2f, 0.3f, t, 1.0f);
-      glClear(GL_COLOR_BUFFER_BIT);
-
-      glUniformMatrix4fv(0, 1, GL_FALSE, glm::value_ptr(mvp));
-      glUniform1f(1, t * 3.0);
-
-      glDrawArrays(GL_TRIANGLES, 0, 6);
+      // shared_texture_framebuffer.unbind();
+      // glClear(GL_COLOR_BUFFER_BIT);
+      // glDrawArrays(GL_TRIANGLES, 0, 6);
 
 #ifdef _WIN32
       print_child_pipe(extract_from_child_pipe(*child_output_channel));

@@ -25,12 +25,46 @@ struct VAO {
   }
 };
 
-struct ExternalTexture {
-  GLuint id;
-  GLuint memory_id;
+class ExternalTexture {
+private:
+  std::optional<GLuint> id{};
+  std::optional<GLuint> memory_id{};
+  GLsizei width{ 0 };
+  GLsizei height{ 0 };
+
+public:
+  ExternalTexture() = delete;
+  ExternalTexture(GLuint _id, GLuint _memory_id, GLsizei _width, GLsizei _height)
+    : id{ _id }, memory_id{ _memory_id }, width { _width }, height{ _height } {}
+  ExternalTexture(const ExternalTexture&) = delete;
+  ExternalTexture(ExternalTexture&& rhs) noexcept
+  {
+    std::swap(id, rhs.id);
+    std::swap(memory_id, rhs.memory_id);
+    std::swap(width, rhs.width);
+    std::swap(height, rhs.height);
+  }
+
+  ExternalTexture& operator=(const ExternalTexture&) = delete;
+  ExternalTexture& operator=(ExternalTexture&& rhs) noexcept
+  {
+    std::swap(id, rhs.id);
+    std::swap(memory_id, rhs.memory_id);
+    std::swap(width, rhs.width);
+    std::swap(height, rhs.height);
+    return *this;
+  }
+
+  auto getId() const { return *id; }
+
+  auto getWidth() const { return width; }
+  auto getHeight() const { return height; }
 
   ~ExternalTexture() {
-    glDeleteTextures(1, &id);
+    if (id)
+      glDeleteTextures(1, &*id);
+    if (memory_id)
+      glDeleteMemoryObjectsEXT(1, &*memory_id);
   }
 };
 
@@ -52,15 +86,18 @@ public:
   }
 
   void wait(const ExternalTexture& texture) {
-    // GLenum src_layout = GL_LAYOUT_COLOR_ATTACHMENT_EXT;
+    // GLenum src_layout = GL_LAYOUT_COLOR_ATTACHMENT_EXT; // We will be using the texture as framebuffer backing
+    // Our current client written using Vulkano can only handle the general layout
     GLenum src_layout = GL_LAYOUT_GENERAL_EXT;
-    glWaitSemaphoreEXT(*id, 0, nullptr, 1, &texture.id, &src_layout);
+    const std::array textures{ texture.getId() };
+    glWaitSemaphoreEXT(*id, 0, nullptr, 1, textures.data(), &src_layout);
   }
 
   void signal(const ExternalTexture& texture) {
-    // GLenum dst_layout = GL_LAYOUT_SHADER_READ_ONLY_EXT;
     GLenum dst_layout = GL_LAYOUT_GENERAL_EXT;
-    glSignalSemaphoreEXT(*id, 0, nullptr, 1, &texture.id, &dst_layout);
+    // GLenum dst_layout = GL_LAYOUT_SHADER_READ_ONLY_EXT; // A shader will be using the texture next on the Vulkan side
+    const std::array textures{ texture.getId() };
+    glSignalSemaphoreEXT(*id, 0, nullptr, 1, textures.data(), &dst_layout);
   }
 
   GLuint getId() const {
@@ -73,15 +110,52 @@ public:
   }
 };
 
-struct Framebuffer {
-  GLuint id;
-  GLuint depth_tex_id;
+class Framebuffer {
+private:
+  GLuint id{};
+  GLuint depth_tex_id{};
 
-  Framebuffer(const ExternalTexture& texture) {
+  GLsizei width{}, height{};
+
+  enum class BindState
+  {
+    Unbound,
+    DrawingBound = 0b01,
+    ReadingBound = 0b10,
+    Bound = DrawingBound | ReadingBound,
+  };
+
+  static constexpr GLenum bind_state_to_framebuffer_target(BindState state)
+  {
+    switch (state)
+    {
+    case BindState::Bound:
+    case BindState::Unbound:
+      return GL_FRAMEBUFFER;
+    case BindState::DrawingBound:
+      return GL_DRAW_FRAMEBUFFER;
+    case BindState::ReadingBound:
+      return GL_READ_FRAMEBUFFER;
+    }
+    std::unreachable();
+  }
+
+  friend constexpr BindState operator|(const BindState& lhs, const BindState& rhs);
+
+  BindState bind_state{ BindState::Unbound };
+
+public:
+  Framebuffer() = default;
+  Framebuffer(const Framebuffer&) = delete;
+  Framebuffer& operator=(const Framebuffer&) = delete;
+
+  explicit Framebuffer(const ExternalTexture& texture)
+    : width{ texture.getWidth() }, height{ texture.getHeight() }
+  {
     glGenFramebuffers(1, &id);
     glBindFramebuffer(GL_FRAMEBUFFER, id);
 
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture.id, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture.getId(), 0);
 
     // Depthbuffer
     glGenRenderbuffers(1, &depth_tex_id);
@@ -90,24 +164,59 @@ struct Framebuffer {
 
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, depth_tex_id);
 
-    if(glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-      throw std::runtime_error{"Failed to create framebuffer"};    
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+      throw std::runtime_error{"Failed to create framebuffer"};
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
   }
 
-  void bind() {
-    glBindFramebuffer(GL_FRAMEBUFFER, id);
+  void bind(bool reading = true, bool drawing = true)
+  {
+    if (bind_state == BindState::Bound)
+      return;
+
+    const auto desired_state = (reading ? BindState::ReadingBound : BindState::Unbound) | (drawing ? BindState::DrawingBound : BindState::Unbound);
+    if (bind_state == desired_state)
+      return;
+
+    glBindFramebuffer(bind_state_to_framebuffer_target(bind_state), id);
+    bind_state = desired_state;
+    glViewport(0, 0, width, height);
   }
 
-  void unbind() {
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  void unbind(bool reading = true, bool drawing = true)
+  {
+    if (bind_state == BindState::Unbound)
+      return;
+
+    const auto desired_state = (reading ? BindState::Unbound : BindState::ReadingBound) | (drawing ? BindState::Unbound : BindState::DrawingBound);
+    if (bind_state == desired_state)
+      return;
+
+    glBindFramebuffer(bind_state_to_framebuffer_target(bind_state), 0);
+    bind_state = desired_state;
   }
 
-  ~Framebuffer() {
+  void blit_to_screen()
+  {
+    bind(true, false);
+    unbind(false, true);
+    glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    unbind();
+  }
+
+  ~Framebuffer()
+  {
+    bind();
+    glDeleteRenderbuffers(1, &depth_tex_id);
     glDeleteFramebuffers(1, &id);
+    unbind();
   }
 };
+
+constexpr Framebuffer::BindState operator|(const Framebuffer::BindState& lhs, const Framebuffer::BindState& rhs) {
+  return static_cast<Framebuffer::BindState>(std::to_underlying(lhs) | std::to_underlying(rhs));
+}
 
 std::unique_ptr<Shader> create_shader() {
   GLuint vs_shader{ glCreateShader(GL_VERTEX_SHADER) }, fs_shader{ glCreateShader(GL_FRAGMENT_SHADER) };
