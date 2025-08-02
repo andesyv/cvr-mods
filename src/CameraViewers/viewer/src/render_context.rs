@@ -1,7 +1,8 @@
 use crate::create_external_semaphore;
 use crate::external_image::ExternalImage;
 use crate::platform::{
-    IPCChannel, IPCSemaphore, MemoryExporter, get_external_memory_type, get_external_semaphore_type,
+    IPCChannel, IPCSemaphore, MemoryExporter, SemaphoreReadyStatus, get_external_memory_type,
+    get_external_semaphore_type,
 };
 use glam::{Mat4, Vec3};
 use std::sync::Arc;
@@ -13,7 +14,7 @@ use vulkano::command_buffer::{
     PrimaryCommandBufferAbstract, RenderPassBeginInfo, SemaphoreSubmitInfo, SubmitInfo,
 };
 use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
-use vulkano::descriptor_set::{DescriptorImageViewInfo, DescriptorSet, WriteDescriptorSet};
+use vulkano::descriptor_set::{DescriptorSet, WriteDescriptorSet};
 use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
 use vulkano::device::{
     Device, DeviceCreateInfo, DeviceExtensions, DeviceProperties, Queue, QueueCreateInfo,
@@ -104,16 +105,14 @@ fn create_instance(event_loop: &ActiveEventLoop) -> Arc<Instance> {
     required_extensions.khr_external_fence_capabilities = true;
 
     let enabled_layers = 'a: {
-        for debug_layer in POSSIBLE_DEBUG_LAYERS {
-            if let Some(wanted_layer) = debug_layer {
-                if library
-                    .layer_properties()
-                    .unwrap()
-                    .any(|available_layer| available_layer.name() == wanted_layer)
-                {
-                    println!("Using validation layer: {}", wanted_layer);
-                    break 'a vec![wanted_layer.to_string()];
-                }
+        for wanted_layer in POSSIBLE_DEBUG_LAYERS.into_iter().flatten() {
+            if library
+                .layer_properties()
+                .unwrap()
+                .any(|available_layer| available_layer.name() == wanted_layer)
+            {
+                println!("Using validation layer: {}", wanted_layer);
+                break 'a vec![wanted_layer.to_string()];
             }
         }
         vec![]
@@ -129,61 +128,8 @@ fn create_instance(event_loop: &ActiveEventLoop) -> Arc<Instance> {
             ..Default::default()
         },
     )
-    // .map_err(Validated::unwrap)
     .expect("Could not create Vulkan instance")
 }
-
-// #[cfg(debug_assertions)]
-// fn debug_message_callback(
-//     severity: DebugUtilsMessageSeverity,
-//     message_type: DebugUtilsMessageType,
-//     callback_data: DebugUtilsMessengerCallbackData<'_>,
-// ) {
-//     match severity {
-//         DebugUtilsMessageSeverity::INFO | DebugUtilsMessageSeverity::VERBOSE => {
-//             println!("Vulkan Info: {}", callback_data.message)
-//         }
-//         _ => println!(
-//             "Vulkan Error (Type: {:?}): {}",
-//             message_type, callback_data.message
-//         ),
-//     };
-// }
-
-// #[cfg(not(debug_assertions))]
-// fn debug_message_callback(message: &Message) {
-//     match message.severity {
-//         DebugUtilsMessageSeverity {
-//             information: false,
-//             verbose: false,
-//             ..
-//         } => println!("Error (Type: {:?}): {}", message.ty, message.description),
-//         _ => (),
-//     };
-// }
-
-// pub unsafe fn create_debug_messenger(instance: &Arc<Instance>) -> DebugUtilsMessenger {
-//     DebugUtilsMessenger::new(
-//         instance.clone(),
-//         DebugUtilsMessengerCreateInfo {
-//             message_severity: DebugUtilsMessageSeverity {
-//                 error: true,
-//                 warning: true,
-//                 information: true,
-//                 verbose: true,
-//                 ..Default::default()
-//             },
-//             message_type: DebugUtilsMessageType {
-//                 general: true,
-//                 validation: true,
-//                 performance: true,
-//                 ..Default::default()
-//             },
-//             ..DebugUtilsMessengerCreateInfo::user_callback(Arc::new(debug_message_callback))
-//         },
-//     )
-//     .unwrap()
-// }
 
 fn matches_target_driver_and_devices(
     target_driver: &Option<Uuid>,
@@ -222,8 +168,7 @@ fn find_physical_device_and_queue_family(
         .ok()?
         .filter_map(|d| {
             // Filter on driver and devices
-            if !matches_target_driver_and_devices(&target_driver, &target_devices, &d.properties())
-            {
+            if !matches_target_driver_and_devices(&target_driver, &target_devices, d.properties()) {
                 return None;
             }
 
@@ -233,7 +178,7 @@ fn find_physical_device_and_queue_family(
                     .enumerate()
                     .position(|(i, q)| {
                         q.queue_flags.contains(QueueFlags::GRAPHICS)
-                            && d.surface_support(i as u32, &surface).unwrap_or(false)
+                            && d.surface_support(i as u32, surface).unwrap_or(false)
                     })
                     .map(|i| (d, i as u32))
             } else {
@@ -258,10 +203,10 @@ fn create_swapchain(
 
     let image_format = device
         .physical_device()
-        .surface_formats(&surface, Default::default())
+        .surface_formats(surface, Default::default())
         .unwrap()
         .first()
-        .and_then(|t| Some(t.0))?;
+        .map(|t| t.0)?;
 
     let image_extent = surface
         .object()
@@ -298,13 +243,6 @@ fn create_framebuffers(
         extent: dimensions,
         depth_range: 0.0..=1.0,
     };
-
-    // let perspective = Matrix4::from(PerspectiveFov {
-    //     fovy: Deg(45.0).into(),
-    //     aspect: dimensions[0] / dimensions[1],
-    //     near: 0.1,
-    //     far: 100.0,
-    // });
 
     let framebuffers = images
         .iter()
@@ -352,17 +290,9 @@ fn create_descriptor_set(
     DescriptorSet::new(
         descriptor_set_allocator,
         layout.clone(),
-        [
-            WriteDescriptorSet::image_view_sampler(0, image_view, sampler),
-            // WriteDescriptorSet::sampler(0, sampler),
-            // WriteDescriptorSet::image_view(1, image_view),
-            // WriteDescriptorSet::image_view_with_layout_array(1,
-            //                                                  0,
-            //                                                  [DescriptorImageViewInfo {
-            //                                                      image_view,
-            //                                                      image_layout: ImageLayout::ShaderReadOnlyOptimal,
-            //                                                  }]),
-        ],
+        [WriteDescriptorSet::image_view_sampler(
+            0, image_view, sampler,
+        )],
         [],
     )
     .unwrap()
@@ -371,44 +301,14 @@ fn create_descriptor_set(
 mod vs {
     vulkano_shaders::shader! {
         ty: "vertex",
-        src: "
-            #version 460
-            layout(location = 0) in vec3 position;
-            layout(location = 1) in vec2 tex_coord;
-            layout(push_constant) uniform FrameData {
-                float time;
-                mat4 mvp;
-            } frame_data;
-            layout(location = 0) out vec2 uv;
-            void main() {
-                uv = tex_coord;
-                gl_Position = frame_data.mvp * vec4(position, 1.0);
-            }
-            "
+        path: "src/shaders/default.vert"
     }
 }
 
 mod fs {
     vulkano_shaders::shader! {
         ty: "fragment",
-        src: "
-            #version 460
-
-            layout(location = 0) in vec2 uv;
-
-            // layout(set = 0, binding = 0) uniform sampler s;
-            // layout(set = 0, binding = 1) uniform texture2D tex;
-            // Combined image and sampler:
-            layout(binding = 0) uniform sampler2D s;
-
-            layout(location = 0) out vec4 frag_colour;
-
-            void main() {
-                // frag_colour = vec4(texture(sampler2D(tex, s), uv).rgb, 1.0);
-                frag_colour = vec4(texture(s, uv).rgb, 1.0);
-                // frag_colour = vec4(uv, 0.0, 1.0);
-            }
-            "
+        path: "src/shaders/default.frag"
     }
 }
 
@@ -437,6 +337,16 @@ pub struct RenderContext {
     external: Option<ExternalCommunication>,
     image_descriptor_set: Arc<DescriptorSet>,
     last_submitted_swapchain_image_index: usize,
+}
+
+pub enum DrawResult {
+    Ok,
+    /// Swapchain is outdated and needs to be recreated. The frame may or may not have been submitted.
+    SwapchainOutdated,
+    /// The host is currently holding us hostage, and we're not allowed to draw yet
+    WaitingForHost,
+    /// We lost our connection to the host and should exit
+    HostDisconnected,
 }
 
 impl RenderContext {
@@ -685,7 +595,7 @@ impl RenderContext {
 
         let stages = [vs_entry_point, fs_entry_point]
             .into_iter()
-            .map(|e| PipelineShaderStageCreateInfo::new(e))
+            .map(PipelineShaderStageCreateInfo::new)
             .collect();
 
         let layout = PipelineLayout::new(
@@ -756,8 +666,6 @@ impl RenderContext {
             let shared_image = ExternalImage::new(
                 device.clone(),
                 &memory_allocator,
-                &command_buffer_allocator,
-                &queue,
                 dimensions,
                 memory_handle_type,
             )
@@ -781,9 +689,25 @@ impl RenderContext {
                 &shared_image,
                 memory_handle_type,
             );
-            let host_process_semaphore = memory_exporter.flush_and_transform_to_semaphore();
+            let mut host_process_semaphore = memory_exporter.flush_and_transform_to_semaphore();
             let image_view = ImageView::new_default(shared_image.into()).unwrap();
             let shared_image_descriptor_set = create_descriptor_set(&pipeline, &device, image_view);
+
+            // The semaphores are initialized in an unsignaled state. We want the host to start
+            // rendering first, so we need to signal the semaphore so the host can start.
+            queue
+                .with(|mut q| unsafe {
+                    q.submit_unchecked(
+                        &[SubmitInfo {
+                            signal_semaphores: vec![SemaphoreSubmitInfo::new(end_sem.clone())],
+                            ..Default::default()
+                        }],
+                        None,
+                    )
+                })
+                .unwrap();
+
+            host_process_semaphore.signal();
 
             (
                 Some(ExternalCommunication {
@@ -848,230 +772,26 @@ impl RenderContext {
             image_descriptor_set,
             last_submitted_swapchain_image_index: 0,
         }
-
-        //
-        // let mut recreate_swapchain = false;
-        // let mut previous_frame_end = Some(vulkano::sync::now(device.clone()).boxed());
-        //
-        // let descriptor_set_allocator = StandardDescriptorSetAllocator::new(device.clone());
-        //
-        // let layout = pipeline.layout().set_layouts().get(0).unwrap();
-        // let sampler = Sampler::new(
-        //     device.clone(),
-        //     SamplerCreateInfo {
-        //         mag_filter: Filter::Linear,
-        //         min_filter: Filter::Linear,
-        //         address_mode: [SamplerAddressMode::Repeat; 3],
-        //         ..Default::default()
-        //     },
-        // )
-        // .unwrap();
-        //
-        // let sync_image_set = PersistentDescriptorSet::new(
-        //     &descriptor_set_allocator,
-        //     layout.clone(),
-        //     [WriteDescriptorSet::image_view_sampler(
-        //         0, image_view, sampler,
-        //     )],
-        // )
-        // .unwrap();
-        //
-        // event_loop.run(move |event, _, control_flow| {
-        //     let window = surface.object().unwrap().downcast_ref::<Window>().unwrap();
-        //     match event {
-        //         Event::WindowEvent {
-        //             event: WindowEvent::CloseRequested,
-        //             ..
-        //         } => *control_flow = ControlFlow::Exit,
-        //         Event::WindowEvent {
-        //             event: WindowEvent::Resized(_),
-        //             ..
-        //         } => recreate_swapchain = true,
-        //         Event::RedrawEventsCleared => {
-        //             let dimensions = window.inner_size();
-        //             if dimensions.width == 0 || dimensions.height == 0 {
-        //                 return;
-        //             }
-        //
-        //             queue
-        //                 .with(|mut q| unsafe {
-        //                     q.submit_unchecked(
-        //                         [SubmitInfo {
-        //                             signal_semaphores: vec![SemaphoreSubmitInfo::semaphore(
-        //                                 vk_end_sem.clone(),
-        //                             )],
-        //                             ..Default::default()
-        //                         }],
-        //                         None,
-        //                     )
-        //                 })
-        //                 .unwrap();
-        //
-        //             queue
-        //                 .with(|mut q| unsafe {
-        //                     q.submit_unchecked(
-        //                         [SubmitInfo {
-        //                             wait_semaphores: vec![SemaphoreSubmitInfo::semaphore(
-        //                                 vk_begin_sem.clone(),
-        //                             )],
-        //                             ..Default::default()
-        //                         }],
-        //                         None,
-        //                     )
-        //                 })
-        //                 .unwrap();
-        //
-        //             previous_frame_end.as_mut().unwrap().cleanup_finished();
-        //
-        //             if recreate_swapchain {
-        //                 let (new_swapchain, swapchain_images) =
-        //                     match swapchain.recreate(SwapchainCreateInfo {
-        //                         image_extent: dimensions.into(),
-        //                         ..swapchain.create_info()
-        //                     }) {
-        //                         Err(SwapchainCreationError::ImageExtentNotSupported { .. }) => {
-        //                             return;
-        //                         }
-        //                         r => r.unwrap(),
-        //                     };
-        //                 swapchain = new_swapchain;
-        //                 framebuffers = window::create_framebuffers(
-        //                     &swapchain_images,
-        //                     &render_pass,
-        //                     &mut viewport,
-        //                     &mut perspective,
-        //                 );
-        //                 recreate_swapchain = false;
-        //             }
-        //
-        //             let (image_num, suboptimal, acquire_future) =
-        //                 match acquire_next_image(swapchain.clone(), None) {
-        //                     Err(AcquireError::OutOfDate) => {
-        //                         recreate_swapchain = true;
-        //                         return;
-        //                     }
-        //                     r => r.unwrap(),
-        //                 };
-        //
-        //             // Suboptimal means we can still draw, but should recreate the swapchain for next frame anyway
-        //             if suboptimal {
-        //                 recreate_swapchain = true;
-        //             }
-        //
-        //             let mut builder = AutoCommandBufferBuilder::primary(
-        //                 &command_buffer_allocator,
-        //                 queue.queue_family_index(),
-        //                 CommandBufferUsage::OneTimeSubmit,
-        //             )
-        //             .unwrap();
-        //
-        //             let t = app_timer.elapsed().as_millis() as f32 * 0.001;
-        //             let mvp: Matrix4<f32> = perspective
-        //                 * Matrix4::look_at_rh(
-        //                     Point3 {
-        //                         x: t.sin() * 10.0,
-        //                         y: t.cos() * 10.0,
-        //                         z: -3.0,
-        //                     },
-        //                     Point3 {
-        //                         x: 0.0,
-        //                         y: 0.0,
-        //                         z: 0.0,
-        //                     },
-        //                     Vector3::unit_z(),
-        //                 );
-        //             let push_constants = vs::ty::FrameData {
-        //                 time: t,
-        //                 mvp: mvp.into(),
-        //                 ..Default::default()
-        //             };
-        //
-        //             builder
-        //                 .begin_render_pass(
-        //                     RenderPassBeginInfo {
-        //                         clear_values: vec![Some([0.0, 0.0, 1.0, 1.0].into())],
-        //                         ..RenderPassBeginInfo::framebuffer(
-        //                             framebuffers[image_num as usize].clone(),
-        //                         )
-        //                     },
-        //                     SubpassContents::Inline,
-        //                 )
-        //                 .unwrap()
-        //                 .set_viewport(0, [viewport.clone()])
-        //                 .bind_pipeline_graphics(pipeline.clone())
-        //                 .bind_vertex_buffers(0, vertex_buffer.clone())
-        //                 .push_constants(pipeline.layout().clone(), 0, push_constants)
-        //                 .bind_descriptor_sets(
-        //                     PipelineBindPoint::Graphics,
-        //                     pipeline.layout().clone(),
-        //                     0,
-        //                     sync_image_set.clone(),
-        //                 )
-        //                 .draw(VERTICES.len().try_into().unwrap(), 1, 0, 0)
-        //                 .unwrap()
-        //                 .end_render_pass()
-        //                 .unwrap();
-        //
-        //             let command_buffer = builder.build().unwrap();
-        //
-        //             match previous_frame_end
-        //                 .take()
-        //                 .unwrap()
-        //                 .join(acquire_future)
-        //                 .then_execute(queue.clone(), command_buffer)
-        //                 .unwrap()
-        //                 .then_swapchain_present(
-        //                     queue.clone(),
-        //                     SwapchainPresentInfo::swapchain_image_index(
-        //                         swapchain.clone(),
-        //                         image_num,
-        //                     ),
-        //                 )
-        //                 .then_signal_fence_and_flush()
-        //             {
-        //                 Ok(f) => previous_frame_end = Some(f.boxed()),
-        //                 Err(FlushError::OutOfDate) => {
-        //                     recreate_swapchain = true;
-        //                     previous_frame_end = Some(vulkano::sync::now(device.clone()).boxed());
-        //                 }
-        //                 Err(e) => panic!("Failed to flush future: {:?}", e),
-        //             }
-        //         }
-        //         _ => (),
-        //     }
-        // });
     }
 
-    pub fn draw(&mut self, time: f32) {
+    pub fn draw(&mut self, time: f32) -> DrawResult {
         if let Some(ExternalCommunication {
             host_process_semaphore,
-            end_sem,
             begin_sem,
             ..
         }) = self.external.as_mut()
         {
-            self.queue
-                .with(|mut q| unsafe {
-                    q.submit_unchecked(
-                        &[SubmitInfo {
-                            signal_semaphores: vec![SemaphoreSubmitInfo::new(end_sem.clone())],
-                            ..Default::default()
-                        }],
-                        None,
-                    )
-                })
-                .unwrap();
-
             // As both the host and the client process make use of the same graphics device,
             // the graphics queue will be intermingled with commands from both processes.
             // In order for the semaphore order logic to be correct, we therefore need to ensure the
             // processes are sequentially drawing frames one after another. That way both processes
             // submit graphics commands which will end up in the expected order on the graphics
             // device.
-            println!("Client done rendering");
-            host_process_semaphore.signal();
-            host_process_semaphore.wait();
-            println!("Client started rendering");
+            match host_process_semaphore.ready_status() {
+                SemaphoreReadyStatus::NotReady => return DrawResult::WaitingForHost,
+                SemaphoreReadyStatus::ConnectionLost => return DrawResult::HostDisconnected,
+                SemaphoreReadyStatus::Ready => (),
+            }
 
             self.queue
                 .with(|mut q| unsafe {
@@ -1097,25 +817,8 @@ impl RenderContext {
         .map_err(Validated::unwrap)
         .unwrap();
 
-        let acquire_results = acquire_next_image(
-            self.swapchain.clone(),
-            None, /*Some(Duration::from_secs(1))*/
-        )
-        .map_err(Validated::unwrap);
-        match acquire_results {
-            Err(VulkanError::Timeout) => {
-                println!("Timeout while waiting for next image. Image was skipped.");
-                return;
-            }
-            Err(e) => panic!("Failed to acquire next image: {:?}", e),
-            _ => (),
-        };
-
-        let (image_index, framebuffer_suboptimal, acquire_future) = acquire_results.unwrap();
-
-        if framebuffer_suboptimal {
-            unimplemented!()
-        }
+        let (image_index, mut swapchain_outdated, acquire_future) =
+            acquire_next_image(self.swapchain.clone(), None).unwrap();
 
         builder
             .begin_render_pass(
@@ -1182,13 +885,14 @@ impl RenderContext {
 
         // In case we cought up to our maximum frames-in-flight, finish waiting for the current
         // frame to finish from last time
-        self.swapchain_fences.get_mut(image_index as usize).take();
+        self.swapchain_fences
+            .get_mut(image_index as usize)
+            .map(|inner| inner.take());
 
         let current_future = if let Some(last_frame_future) = self
             .swapchain_fences
             .get_mut(self.last_submitted_swapchain_image_index)
-            .map(Option::take)
-            .flatten()
+            .and_then(Option::take)
         {
             last_frame_future.join(acquire_future).boxed()
         } else {
@@ -1214,8 +918,37 @@ impl RenderContext {
 
                 self.last_submitted_swapchain_image_index = image_index as usize;
             }
-            Err(VulkanError::OutOfDate) => unimplemented!(),
+            Err(VulkanError::OutOfDate) => swapchain_outdated = true,
             Err(e) => panic!("Failed to submit new frame: {:?}", e),
+        }
+
+        if let Some(ExternalCommunication {
+            host_process_semaphore,
+            end_sem,
+            ..
+        }) = self.external.as_mut()
+        {
+            self.queue
+                .with(|mut q| unsafe {
+                    q.submit_unchecked(
+                        &[SubmitInfo {
+                            signal_semaphores: vec![SemaphoreSubmitInfo::new(end_sem.clone())],
+                            ..Default::default()
+                        }],
+                        None,
+                    )
+                })
+                .unwrap();
+
+            if !host_process_semaphore.signal() {
+                return DrawResult::HostDisconnected;
+            }
+        }
+
+        if swapchain_outdated {
+            DrawResult::SwapchainOutdated
+        } else {
+            DrawResult::Ok
         }
     }
 }

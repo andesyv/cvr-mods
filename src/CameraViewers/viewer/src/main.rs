@@ -1,13 +1,14 @@
 #![feature(unix_socket_ancillary_data)]
 
 use crate::platform::IPCChannel;
+use crate::render_context::RenderContextCreationInfo;
+use crate::window::Window;
 use std::env::args;
 use std::path::Path;
 use std::sync::Arc;
-use uuid::{Uuid, uuid};
-// use platform::get_allowed_external_semaphore_handle_types;
-use crate::render_context::RenderContextCreationInfo;
-use crate::window::Window;
+use uuid::Uuid;
+#[cfg(test)]
+use uuid::uuid;
 use vulkano::sync::semaphore::{ExternalSemaphoreHandleTypes, Semaphore, SemaphoreCreateInfo};
 use vulkano::{Validated, VulkanError, device::Device};
 use winit::event_loop::EventLoop;
@@ -39,13 +40,9 @@ const HEIGHT: u32 = 600;
 fn parse_args(args: &[String]) -> RenderContextCreationInfo {
     if let Some((driver, devices)) = args
         .get(1)
-        .map(|s| parse_driver_and_devices_uuids(&s[..]))
-        .flatten()
+        .and_then(|s| parse_driver_and_devices_uuids(&s[..]))
     {
-        let channel = args
-            .get(2)
-            .map(|s| find_channel_from_args(&s[..]))
-            .flatten();
+        let channel = args.get(2).and_then(|s| find_channel_from_args(&s[..]));
         RenderContextCreationInfo {
             driver: Some(driver),
             devices,
@@ -72,7 +69,10 @@ fn find_channel_from_args(possible_socket_path: &str) -> Option<IPCChannel> {
 }
 
 fn parse_driver_and_devices_uuids(configuration: &str) -> Option<(Uuid, Vec<Uuid>)> {
-    let configuration = configuration.strip_prefix("\"").map(|s|s.strip_suffix("\"")).flatten().unwrap_or(configuration);
+    let configuration = configuration
+        .strip_prefix("\"")
+        .and_then(|s| s.strip_suffix("\""))
+        .unwrap_or(configuration);
     let configuration = configuration.strip_prefix("driver: ")?;
     let (driver_uuid_str, devices_uuids_str) = configuration.split_once(", devices: ")?;
     let devices_uuids = devices_uuids_str

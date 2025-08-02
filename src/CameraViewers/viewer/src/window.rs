@@ -1,8 +1,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::platform::IPCChannel;
-use crate::render_context::{RenderContext, RenderContextCreationInfo};
+use crate::render_context::{DrawResult, RenderContext, RenderContextCreationInfo};
 use crate::{HEIGHT, WIDTH};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
@@ -72,18 +71,26 @@ impl ApplicationHandler for Window {
                         ..
                     },
                 ..
-            } => match key.as_ref() {
-                Key::Named(NamedKey::Escape) => {
+            } => {
+                if let Key::Named(NamedKey::Escape) = key.as_ref() {
                     self.close_requested = true;
                 }
-                _ => (),
-            },
+            }
             WindowEvent::RedrawRequested => {
                 let PhysicalSize { width, height } =
                     self.inner_window.as_ref().unwrap().inner_size();
-                if width != 0 && height != 0 {
-                    let t = self.app_timer.elapsed().as_secs_f32();
-                    self.context.as_mut().unwrap().draw(t);
+                if self.close_requested || width == 0 || height == 0 {
+                    return;
+                }
+
+                let t = self.app_timer.elapsed().as_secs_f32();
+                match self.context.as_mut().unwrap().draw(t) {
+                    DrawResult::WaitingForHost => {
+                        self.inner_window.as_ref().unwrap().request_redraw()
+                    }
+                    DrawResult::HostDisconnected => self.close_requested = true,
+                    // DrawResult::SwapchainOutdated => {} // TODO
+                    _ => (),
                 }
             }
             // WindowEvent::Resized(_) => {

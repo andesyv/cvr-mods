@@ -1,15 +1,8 @@
 use crate::platform::NativeManagedHandle;
 use std::sync::Arc;
-use vulkano::command_buffer::allocator::CommandBufferAllocator;
-use vulkano::command_buffer::{
-    AutoCommandBufferBuilder, ClearColorImageInfo, CommandBufferUsage, PrimaryCommandBufferAbstract,
-};
-use vulkano::device::Queue;
-use vulkano::format::ClearColorValue;
-use vulkano::image::{Image, ImageLayout, ImageMemory, ImageType};
+use vulkano::image::{Image, ImageMemory, ImageType};
 use vulkano::memory::allocator::MemoryTypeFilter;
 use vulkano::memory::{MemoryAllocateInfo, ResourceMemory};
-use vulkano::sync::GpuFuture;
 use vulkano::{
     DeviceSize, Validated, VulkanError,
     device::Device,
@@ -44,17 +37,14 @@ impl From<ExternalImage> for Arc<Image> {
 }
 
 impl ExternalImage {
-    pub fn new<M, C>(
+    pub fn new<M>(
         device: Arc<Device>,
         memory_allocator: &M,
-        command_buffer_allocator: &Arc<C>,
-        queue: &Arc<Queue>,
         dimensions: [u32; 2],
         handle_type: ExternalMemoryHandleType,
     ) -> Result<Self, ExternalImageError>
     where
         M: MemoryAllocator,
-        C: CommandBufferAllocator,
     {
         let raw_image = RawImage::new(
             device.clone(),
@@ -90,37 +80,11 @@ impl ExternalImage {
         )
         .map_err(Validated::unwrap)?;
 
-        // let allocation_size = image_memory.allocation_size();
-        // let image_fd = image_memory
-        //     .export_fd(ExternalMemoryHandleType::OpaqueFd)
-        //     .unwrap();
-
         let image = Arc::new(
             raw_image
                 .bind_memory([ResourceMemory::new_dedicated(image_memory)])
                 .map_err(|(err, _, _)| err.unwrap())?,
         );
-
-        // External images need to have its memory initialised immediately as they may be
-        // externally written.
-        // let mut builder = AutoCommandBufferBuilder::primary(
-        //     command_buffer_allocator.clone(),
-        //     queue.queue_family_index(),
-        //     CommandBufferUsage::OneTimeSubmit,
-        // )
-        // .map_err(Validated::unwrap)
-        // .unwrap();
-        //
-        // builder
-        //     .clear_color_image(ClearColorImageInfo {
-        //         clear_value: ClearColorValue::Float([1.0, 0.0, 1.0, 1.0]),
-        //         image_layout: ImageLayout::General,
-        //         ..ClearColorImageInfo::image(image.clone())
-        //     })
-        //     .unwrap();
-        // let command_buffer = builder.build().unwrap();
-        // let future = command_buffer.execute(queue.clone()).unwrap();
-        // future.flush().unwrap();
 
         Ok(Self {
             inner: image,

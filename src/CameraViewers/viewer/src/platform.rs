@@ -1,13 +1,15 @@
-use std::io::{IoSlice, Read, Write};
+use crate::external_image::ExternalImage;
+use std::io::{ErrorKind, IoSlice, Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::{SocketAncillary, UnixStream};
 use std::path::Path;
-use crate::external_image::ExternalImage;
 use std::sync::Arc;
-use vulkano::image::Image;
-use vulkano::sync::semaphore::{ExternalSemaphoreHandleType, ExternalSemaphoreInfo, Semaphore};
+use std::thread::sleep;
+use std::time::Duration;
 #[cfg(unix)]
 use vulkano::Validated;
+use vulkano::image::Image;
+use vulkano::sync::semaphore::{ExternalSemaphoreHandleType, ExternalSemaphoreInfo, Semaphore};
 use vulkano::{
     buffer::{BufferUsage, ExternalBufferInfo},
     device::physical::PhysicalDevice,
@@ -136,7 +138,7 @@ fn format_handle(handle: &NativeManagedHandle) -> String {
 }
 
 fn format_semaphore_handle(identifier: &str, handle: &NativeManagedHandle) -> String {
-    const HANDLE_TYPE: &'static str = if cfg!(windows) {
+    const HANDLE_TYPE: &str = if cfg!(windows) {
         "OpaqueWin32"
     } else {
         "OpaqueFd"
@@ -149,8 +151,12 @@ fn format_semaphore_handle(identifier: &str, handle: &NativeManagedHandle) -> St
     )
 }
 
-fn format_memory_handle(identifier: &str, image: &ExternalImage, handle: &NativeManagedHandle) -> String {
-    const HANDLE_TYPE: &'static str = if cfg!(windows) {
+fn format_memory_handle(
+    identifier: &str,
+    image: &ExternalImage,
+    handle: &NativeManagedHandle,
+) -> String {
+    const HANDLE_TYPE: &str = if cfg!(windows) {
         "OpaqueWin32"
     } else {
         "OpaqueFd"
@@ -248,7 +254,8 @@ impl MemoryExporter {
             );
         }
 
-        let exported_handle = WinHandle(semaphore.export_win32_handle(handle_type).unwrap() as *mut std::ffi::c_void);
+        let exported_handle =
+            WinHandle(semaphore.export_win32_handle(handle_type).unwrap() as *mut std::ffi::c_void);
         unsafe {
             let new_handle = create_owner_process_accessible_memory_handle(&exported_handle);
             format_semaphore_handle(identifier, &new_handle);
@@ -274,7 +281,8 @@ impl MemoryExporter {
                 .export_fd(handle_type)
                 .map_err(Validated::unwrap)
                 .unwrap();
-            self.channel.send(&format_semaphore_handle(identifier, &file), &file);
+            self.channel
+                .send(&format_semaphore_handle(identifier, &file), &file);
             self.handles.push(file);
         }
 
@@ -316,7 +324,8 @@ impl MemoryExporter {
             .push(MemoryOwnerObject::Image(image.into()));
 
         let file = image.export().unwrap();
-        self.channel.send(&format_memory_handle(identifier, image, &file), &file);
+        self.channel
+            .send(&format_memory_handle(identifier, image, &file), &file);
         self.handles.push(file);
     }
 }
@@ -341,12 +350,13 @@ impl IPCChannel {
         let mut ancillary = SocketAncillary::new(&mut ancillary_buffer[..]);
         ancillary.add_fds(&[handle.as_raw_fd()][..]);
         let io_slice_path = IoSlice::new(msg.as_bytes());
-        self.stream.send_vectored_with_ancillary(&[io_slice_path][..], &mut ancillary).unwrap();
+        self.stream
+            .send_vectored_with_ancillary(&[io_slice_path][..], &mut ancillary)
+            .unwrap();
     }
 
     #[cfg(unix)]
-    pub fn finish_data_stream(self) -> IPCSemaphore
-    {
+    pub fn finish_data_stream(self) -> IPCSemaphore {
         IPCSemaphore::from_stream(self.stream)
     }
 }
@@ -358,23 +368,48 @@ pub struct IPCSemaphore {
     stream: UnixStream,
 }
 
+pub enum SemaphoreReadyStatus {
+    Ready,
+    NotReady,
+    ConnectionLost,
+}
+
 impl IPCSemaphore {
     #[cfg(unix)]
     pub fn from_stream(stream: UnixStream) -> IPCSemaphore {
-        // When stream is used as a semaphore, it's critical that any read blocks until data has
-        // been received.
-        stream.set_nonblocking(false).unwrap();
+        stream.set_nonblocking(true).unwrap();
         IPCSemaphore { stream }
     }
 
     #[cfg(unix)]
-    pub fn wait(&mut self) {
+    pub fn ready_status(&mut self) -> SemaphoreReadyStatus {
         let mut tmp = [0; 10];
-        self.stream.read(&mut tmp).unwrap();
+        match self.stream.read(&mut tmp) {
+            Ok(bytes_read) if bytes_read > 0 => SemaphoreReadyStatus::Ready,
+            Ok(_) => SemaphoreReadyStatus::NotReady,
+            Err(e) if e.kind() == ErrorKind::WouldBlock => SemaphoreReadyStatus::NotReady,
+            Err(e) if e.kind() == ErrorKind::BrokenPipe => SemaphoreReadyStatus::ConnectionLost,
+            Err(e) => panic!("Error: {:?}", e),
+        }
+    }
+
+    pub fn wait(&mut self) -> bool {
+        loop {
+            match self.ready_status() {
+                SemaphoreReadyStatus::Ready => return true,
+                SemaphoreReadyStatus::ConnectionLost => return false,
+                SemaphoreReadyStatus::NotReady => (),
+            }
+            sleep(Duration::from_millis(5))
+        }
     }
 
     #[cfg(unix)]
-    pub fn signal(&mut self) {
-        self.stream.write(&[0]).unwrap();
+    pub fn signal(&mut self) -> bool {
+        match self.stream.write(&[0]) {
+            Ok(_) => true,
+            Err(e) if e.kind() == ErrorKind::BrokenPipe => false,
+            Err(e) => panic!("Failed to send socket data: {:?}", e),
+        }
     }
 }
