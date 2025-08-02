@@ -117,32 +117,19 @@ private:
 
   GLsizei width{}, height{};
 
-  enum class BindState
+  static constexpr GLenum bind_state_to_framebuffer_target(bool reading, bool drawing)
   {
-    Unbound,
-    DrawingBound = 0b01,
-    ReadingBound = 0b10,
-    Bound = DrawingBound | ReadingBound,
-  };
-
-  static constexpr GLenum bind_state_to_framebuffer_target(BindState state)
-  {
-    switch (state)
-    {
-    case BindState::Bound:
-    case BindState::Unbound:
+    if (reading && drawing || !reading && !drawing)
       return GL_FRAMEBUFFER;
-    case BindState::DrawingBound:
-      return GL_DRAW_FRAMEBUFFER;
-    case BindState::ReadingBound:
+
+    if (reading)
       return GL_READ_FRAMEBUFFER;
-    }
-    std::unreachable();
+
+    return GL_DRAW_FRAMEBUFFER;
   }
 
-  friend constexpr BindState operator|(const BindState& lhs, const BindState& rhs);
-
-  BindState bind_state{ BindState::Unbound };
+  bool reading_bound{ false };
+  bool drawing_bound{ false };
 
 public:
   Framebuffer() = default;
@@ -172,36 +159,39 @@ public:
 
   void bind(bool reading = true, bool drawing = true)
   {
-    if (bind_state == BindState::Bound)
+    if (!reading && !drawing || reading_bound && drawing_bound)
       return;
 
-    const auto desired_state = (reading ? BindState::ReadingBound : BindState::Unbound) | (drawing ? BindState::DrawingBound : BindState::Unbound);
-    if (bind_state == desired_state)
+    // If the current state is the desired state, we can exit early
+    if (reading == reading_bound && drawing == drawing_bound)
       return;
 
-    glBindFramebuffer(bind_state_to_framebuffer_target(bind_state), id);
-    bind_state = desired_state;
-    glViewport(0, 0, width, height);
+    glBindFramebuffer(bind_state_to_framebuffer_target(reading, drawing), id);
+
+    reading_bound = reading;
+    drawing_bound = drawing;
   }
 
   void unbind(bool reading = true, bool drawing = true)
   {
-    if (bind_state == BindState::Unbound)
+    if (!reading && !drawing || !reading_bound && !drawing_bound)
       return;
 
-    const auto desired_state = (reading ? BindState::Unbound : BindState::ReadingBound) | (drawing ? BindState::Unbound : BindState::DrawingBound);
-    if (bind_state == desired_state)
+    // If the current state is the desired state, we can exit early
+    if (reading == !reading_bound && drawing == !drawing_bound)
       return;
 
-    glBindFramebuffer(bind_state_to_framebuffer_target(bind_state), 0);
-    bind_state = desired_state;
+    glBindFramebuffer(bind_state_to_framebuffer_target(reading, drawing), 0);
+
+    reading_bound = !reading;
+    drawing_bound = !drawing;
   }
 
-  void blit_to_screen()
+  void blit_to_screen(GLint screen_width, GLint screen_height)
   {
     bind(true, false);
     unbind(false, true);
-    glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    glBlitFramebuffer(0, 0, width, height, 0, 0, screen_width, screen_height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
     unbind();
   }
 
@@ -213,10 +203,6 @@ public:
     unbind();
   }
 };
-
-constexpr Framebuffer::BindState operator|(const Framebuffer::BindState& lhs, const Framebuffer::BindState& rhs) {
-  return static_cast<Framebuffer::BindState>(std::to_underlying(lhs) | std::to_underlying(rhs));
-}
 
 std::unique_ptr<Shader> create_shader() {
   GLuint vs_shader{ glCreateShader(GL_VERTEX_SHADER) }, fs_shader{ glCreateShader(GL_FRAGMENT_SHADER) };

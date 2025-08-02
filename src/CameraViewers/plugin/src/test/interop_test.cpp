@@ -112,22 +112,28 @@ std::vector<ConnectionData> parse_connection_data_from_child_output(std::string_
     const int handle = std::stoi(sub_matches.at(3));
 #endif
 
-    const auto type{ sub_matches.at(0) == "semaphore" ? ConnectionData::Type::Semaphore : ConnectionData::Type::Image};
+    const auto type{sub_matches.at(0) == "semaphore" ? ConnectionData::Type::Semaphore : ConnectionData::Type::Image};
     const bool has_image_data = 3 + 4 < sub_matches.size();
     if (type == ConnectionData::Type::Image && !has_image_data)
-      throw std::runtime_error{ "Image connection data is missing required fields (width, height, memory allocation size, memory image format)" };
+      throw std::runtime_error{
+        "Image connection data is missing required fields (width, height, memory allocation size, memory image format)"
+      };
 
     data.push_back(ConnectionData{
       .type = type,
       .identifier = sub_matches.at(1),
       .handle = handle,
       .handle_type = sub_matches.at(2),
-      .image_data = has_image_data ? std::optional{ConnectionData::ImageData{
-        .width = static_cast<std::uint32_t>(std::stoul(sub_matches.at(4))),
-        .height = static_cast<std::uint32_t>(std::stoul(sub_matches.at(5))),
-        .memory_allocation_size = std::stoull(sub_matches.at(6)),
-        .memory_format = sub_matches.at(7),
-      }} : std::nullopt,
+      .image_data = has_image_data
+                      ? std::optional{
+                        ConnectionData::ImageData{
+                          .width = static_cast<std::uint32_t>(std::stoul(sub_matches.at(4))),
+                          .height = static_cast<std::uint32_t>(std::stoul(sub_matches.at(5))),
+                          .memory_allocation_size = std::stoull(sub_matches.at(6)),
+                          .memory_format = sub_matches.at(7),
+                        }
+                      }
+                      : std::nullopt,
     });
   }
 
@@ -148,14 +154,14 @@ void print_child_pipe(std::string_view child_string_output)
 }
 
 template <std::convertible_to<std::uint8_t> T>
-requires (sizeof(T) == 1)
+  requires (sizeof(T) == 1)
 std::string serialize_uuid(const std::array<T, 16>& bytes)
 {
   constexpr static std::string_view lookup = "0123456789abcdef";
 
   std::string out;
   out.reserve(16 + 4); // 16 characters + 4 hyphens
-  for (std::size_t i{ 0 }, j{ 0 }; j < bytes.size(); ++i, ++j)
+  for (std::size_t i{0}, j{0}; j < bytes.size(); ++i, ++j)
   {
     if (i == 4 || i == 6 + 1 || i == 8 + 2 || i == 10 + 3)
     {
@@ -462,13 +468,14 @@ ssize_t read_fd(int fd, void* ptr, size_t nbytes, int& recvfd)
 class IPCSemaphore
 {
 private:
-  int server_fd{ -1 };
-  int client_fd{ -1 };
+  int server_fd{-1};
+  int client_fd{-1};
   std::array<char, 10> dummy_buffer{};
 
 public:
   IPCSemaphore() = default;
   IPCSemaphore(const IPCSemaphore&) = delete;
+
   IPCSemaphore(IPCSemaphore&& rhs) noexcept
   {
     std::swap(server_fd, rhs.server_fd);
@@ -476,7 +483,7 @@ public:
     std::swap(dummy_buffer, rhs.dummy_buffer);
   }
 
-  IPCSemaphore(int _server_fd, int _client_fd) : server_fd{ _server_fd }, client_fd{ _client_fd }, dummy_buffer{}
+  IPCSemaphore(int _server_fd, int _client_fd) : server_fd{_server_fd}, client_fd{_client_fd}, dummy_buffer{}
   {
     // Set client fd to be blocking
     if (fcntl(client_fd, F_SETFL, fcntl(client_fd, F_GETFL, 0) & ~O_NONBLOCK) < 0)
@@ -484,6 +491,7 @@ public:
   }
 
   IPCSemaphore& operator=(const IPCSemaphore&) = delete;
+
   IPCSemaphore& operator=(IPCSemaphore&& rhs) noexcept
   {
     std::swap(server_fd, rhs.server_fd);
@@ -502,7 +510,7 @@ public:
     }
 #endif
 
-    const auto bytes_read{ read(client_fd, dummy_buffer.data(), dummy_buffer.size()) };
+    const auto bytes_read{read(client_fd, dummy_buffer.data(), dummy_buffer.size())};
     if (bytes_read == 0)
       return;
 
@@ -511,10 +519,13 @@ public:
 
     // Sanity check
     if (bytes_read != 1)
-      std::cerr << "Unexpected amount of bytss read. This could mean we somehow have more signal's than wait's." << std::endl;
+      std::cerr << "Unexpected amount of bytss read. This could mean we somehow have more signal's than wait's." <<
+        std::endl;
 
     if (dummy_buffer[0] != '\0')
-      std::cerr << "Received unexpected data from client. Have the client socket forgotten to transition to \"semaphore\" mode?" << std::endl;
+      std::cerr <<
+        "Received unexpected data from client. Have the client socket forgotten to transition to \"semaphore\" mode?" <<
+        std::endl;
   }
 
   void signal()
@@ -528,7 +539,7 @@ public:
 #endif
 
     char dummy_data = 0;
-    const auto bytes_written{ write(client_fd, &dummy_data, 1) };
+    const auto bytes_written{write(client_fd, &dummy_data, 1)};
     if (bytes_written == 1)
       return;
 
@@ -554,14 +565,15 @@ public:
 class ChildProcess
 {
 private:
-  std::atomic<FILE*> process_stream{ nullptr };
+  std::atomic<FILE*> process_stream{nullptr};
   std::future<int> return_code;
 
 public:
   ChildProcess() = default;
   ChildProcess(const ChildProcess&) = delete;
+
   ChildProcess(ChildProcess&& rhs)
-    : process_stream{ rhs.process_stream.exchange(nullptr) }, return_code{ std::move(rhs.return_code) }
+    : process_stream{rhs.process_stream.exchange(nullptr)}, return_code{std::move(rhs.return_code)}
   {
     // The current implementation of ChildProcess can invoke undefined behaviour due to a dangling this pointer captured
     // in the async lambda if the ChildProcess is moved before the process_stream was set. We therefore have to assert
@@ -570,6 +582,7 @@ public:
   }
 
   ChildProcess& operator=(const ChildProcess&) = delete;
+
   ChildProcess& operator=(ChildProcess&& rhs)
   {
     // Steal the stream
@@ -588,50 +601,54 @@ public:
   {
     // The current thread will block while waiting for incoming socket connections. So for debugging purposes we start
     // and observe the child process in a separate thread so we can pipe its output to the standard output
-    return_code = std::async(std::launch::async, [this, socket_addr_path, driver_and_devices = std::string{ driver_and_devices }]
-    {
-      const std::string cmd{std::format("{} \"{}\" {}", VIEWER_PATH, driver_and_devices, socket_addr_path)};
-      auto child_std_output = popen(cmd.c_str(), "r");
-      if (child_std_output == nullptr)
-      {
-        std::cout << "Failed to spawn child process" << std::endl;
-        return -1;
-      }
+    return_code = std::async(std::launch::async,
+                             [this, socket_addr_path, driver_and_devices = std::string{driver_and_devices}]
+                             {
+                               const std::string cmd{
+                                 std::format("{} \"{}\" {}", VIEWER_PATH, driver_and_devices, socket_addr_path)
+                               };
+                               auto child_std_output = popen(cmd.c_str(), "r");
+                               if (child_std_output == nullptr)
+                               {
+                                 std::cout << "Failed to spawn child process" << std::endl;
+                                 return -1;
+                               }
 
-      this->process_stream.store(child_std_output);
+                               this->process_stream.store(child_std_output);
 
-      const auto child_process_fd = fileno(child_std_output);
-      if (fcntl(child_process_fd, F_GETFD) < 0)
-      {
-        std::cerr << "Child process FD is invalid" << std::endl;
-        return -1;
-      }
+                               const auto child_process_fd = fileno(child_std_output);
+                               if (fcntl(child_process_fd, F_GETFD) < 0)
+                               {
+                                 std::cerr << "Child process FD is invalid" << std::endl;
+                                 return -1;
+                               }
 
-      if (fcntl(child_process_fd, F_SETFL, fcntl(child_process_fd, F_GETFL, 0) | O_NONBLOCK) < 0)
-      {
-        std::cerr << "Failed to set flags for child process" << std::endl;
-        return -1;
-      }
+                               if (fcntl(child_process_fd, F_SETFL,
+                                         fcntl(child_process_fd, F_GETFL, 0) | O_NONBLOCK) < 0)
+                               {
+                                 std::cerr << "Failed to set flags for child process" << std::endl;
+                                 return -1;
+                               }
 
-      while (fcntl(child_process_fd, F_GETFD) > -1)
-      {
-        auto output{extract_from_stdout_stream(child_std_output)};
-        if (!output.empty())
-          print_child_pipe(output);
-        std::this_thread::sleep_for(std::chrono::milliseconds{1});
-      }
+                               while (fcntl(child_process_fd, F_GETFD) > -1)
+                               {
+                                 auto output{extract_from_stdout_stream(child_std_output)};
+                                 if (!output.empty())
+                                   print_child_pipe(output);
+                                 std::this_thread::sleep_for(std::chrono::milliseconds{1});
+                               }
 
-      return 0;
-    });
+                               return 0;
+                             });
   }
 
   int close()
   {
-    const auto unique_process_stream{ process_stream.exchange(nullptr) };
+    const auto unique_process_stream{process_stream.exchange(nullptr)};
     if (unique_process_stream == nullptr)
       return 0;
 
-    const auto command_return_code{ pclose(unique_process_stream) };
+    const auto command_return_code{pclose(unique_process_stream)};
     if (command_return_code < 0)
       return command_return_code;
     return return_code.get();
@@ -643,7 +660,8 @@ public:
   }
 };
 
-std::optional<std::tuple<std::vector<ConnectionData>, ChildProcess, IPCSemaphore>> init_child_process_and_fetch_connection_data(std::string_view driver_and_devices)
+std::optional<std::tuple<std::vector<ConnectionData>, ChildProcess, IPCSemaphore>>
+init_child_process_and_fetch_connection_data(std::string_view driver_and_devices)
 {
   // Create a temp path we will use for the socket connection
   std::error_code ec;
@@ -693,7 +711,7 @@ std::optional<std::tuple<std::vector<ConnectionData>, ChildProcess, IPCSemaphore
     return {};
   }
 
-  ChildProcess child_process{ socket_addr_path.string(), driver_and_devices };
+  ChildProcess child_process{socket_addr_path.string(), driver_and_devices};
 
   std::cout << "Waiting for child process..." << std::endl;
   int client_fd = accept(server_fd, nullptr, nullptr); // Blocks until a connection is made
@@ -713,9 +731,9 @@ std::optional<std::tuple<std::vector<ConnectionData>, ChildProcess, IPCSemaphore
     std::array<char, 256> buffer{};
     int file_fd{-1};
     // Read a maximum of 3 connection data messages
-    for (unsigned int i{ 0 }; i < 3; ++i)
+    for (unsigned int i{0}; i < 3; ++i)
     {
-      const auto bytes_read{ read_fd(client_fd, buffer.data(), buffer.size(), file_fd) };
+      const auto bytes_read{read_fd(client_fd, buffer.data(), buffer.size(), file_fd)};
       if (bytes_read == 0)
         break;
 
@@ -750,8 +768,8 @@ std::optional<std::tuple<std::vector<ConnectionData>, ChildProcess, IPCSemaphore
   }
 
   // Transition the socket connection into a "semaphore"
-  IPCSemaphore semaphore{ server_fd, client_fd };
-  return std::tuple{ std::move(connection_data), std::move(child_process), std::move(semaphore) };
+  IPCSemaphore semaphore{server_fd, client_fd};
+  return std::tuple{std::move(connection_data), std::move(child_process), std::move(semaphore)};
 }
 #endif
 
@@ -801,10 +819,16 @@ std::unique_ptr<ExternalTexture> create_texture_from_connection_data(const std::
     if (!data.image_data.has_value())
       throw std::logic_error{"Image data is missing"};
 
-    const auto& image_data{ *data.image_data };
+    const auto& image_data{*data.image_data};
 
     GLuint texture_id, memory_id;
     glCreateMemoryObjectsEXT(1, &memory_id);
+    if (!glIsMemoryObjectEXT(memory_id))
+      throw std::runtime_error{"Failed to create external memory object!"};
+
+    constexpr GLint true_value{ GL_TRUE };
+    glMemoryObjectParameterivEXT(memory_id, GL_DEDICATED_MEMORY_OBJECT_EXT, &true_value);
+
 #ifdef _WIN32
     if (data.handle_type != "OpaqueWin32")
       throw std::logic_error{"Handle type is not implemented"};
@@ -815,21 +839,19 @@ std::unique_ptr<ExternalTexture> create_texture_from_connection_data(const std::
     glImportMemoryFdEXT(memory_id, image_data.memory_allocation_size, GL_HANDLE_TYPE_OPAQUE_FD_EXT, data.handle);
 #endif
 
-    if (!glIsMemoryObjectEXT(memory_id))
-      throw std::runtime_error{"Failed to create external memory object!"};
 
     glGenTextures(1, &texture_id);
     glBindTexture(GL_TEXTURE_2D, texture_id);
 
-    // GLuint texture, GLsizei levels, GLenum internalFormat, GLsizei width, GLsizei height, GLuint memory, GLuint64 offset
-    glTextureStorageMem2DEXT(texture_id, 1, format_from_vk_format(image_data.memory_format),
-                             static_cast<GLsizei>(image_data.width), static_cast<GLsizei>(image_data.height), memory_id,
-                             0);
+    glTexStorageMem2DEXT(GL_TEXTURE_2D, 1, format_from_vk_format(image_data.memory_format),
+                         static_cast<GLsizei>(image_data.width), static_cast<GLsizei>(image_data.height), memory_id,
+                         0);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glBindTexture(GL_TEXTURE_2D, 0);
 
-    return std::make_unique<ExternalTexture>(texture_id, memory_id, static_cast<GLsizei>(image_data.width), static_cast<GLsizei>(image_data.height));
+    return std::make_unique<ExternalTexture>(texture_id, memory_id, static_cast<GLsizei>(image_data.width),
+                                             static_cast<GLsizei>(image_data.height));
   }
 
   return {};
@@ -862,10 +884,13 @@ int main()
   glfwMakeContextCurrent(window);
   constexpr float FOV = 45.f;
   static auto p_mat{glm::perspective(FOV, 800.f / 600.f, 0.1f, 100.f)};
+  static int window_width{ WIDTH }, window_height{ HEIGHT };
   glfwSetFramebufferSizeCallback(window, [](GLFWwindow* window, int width, int height)
   {
     glViewport(0, 0, width, height);
     p_mat = glm::perspective(FOV, static_cast<float>(width) / static_cast<float>(height), 0.1f, 100.f);
+    window_width = width;
+    window_height = height;
   });
 
   // if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
@@ -886,8 +911,8 @@ int main()
   std::unordered_set<std::string> supported_extensions;
   GLint supported_extension_count;
   glGetIntegerv(GL_NUM_EXTENSIONS, &supported_extension_count);
-  for (GLuint i{ 0 }; i < supported_extension_count; ++i)
-    supported_extensions.insert(std::string{ reinterpret_cast<const char*>(glGetStringi(GL_EXTENSIONS, i)) });
+  for (GLuint i{0}; i < supported_extension_count; ++i)
+    supported_extensions.insert(std::string{reinterpret_cast<const char*>(glGetStringi(GL_EXTENSIONS, i))});
 
   if (!supported_extensions.contains("GL_EXT_memory_object") || !supported_extensions.contains("GL_EXT_semaphore"))
   {
@@ -904,7 +929,8 @@ int main()
     return -1;
   }
 #elif __linux__
-  if (!supported_extensions.contains("GL_EXT_memory_object_fd") || !supported_extensions.contains("GL_EXT_semaphore_fd"))
+  if (!supported_extensions.contains("GL_EXT_memory_object_fd") || !supported_extensions.
+    contains("GL_EXT_semaphore_fd"))
   {
     std::cout << "Extension GL_EXT_memory_object_fd or GL_EXT_semaphore_fd is missing." << std::endl;
     glfwTerminate();
@@ -919,9 +945,9 @@ int main()
     std::array<GLubyte, 16> driver_uuid{};
     glGetUnsignedBytevEXT(GL_DRIVER_UUID_EXT, driver_uuid.data());
     ss << "driver: " << serialize_uuid(driver_uuid) << ", devices: ";
-    GLint num_devices{ 0 };
+    GLint num_devices{0};
     glGetIntegerv(GL_NUM_DEVICE_UUIDS_EXT, &num_devices);
-    for (GLuint i{ 0 }; i < num_devices; ++i)
+    for (GLuint i{0}; i < num_devices; ++i)
     {
       std::array<GLubyte, 16> device_uuid{};
       glGetUnsignedBytei_vEXT(GL_DEVICE_UUID_EXT, i, device_uuid.data());
@@ -967,7 +993,8 @@ int main()
     const auto msg = std::format("OpenGL: {{ source: {}, type: {}, severity: {}, message: {} }}", sources.at(source),
                                  types.at(type), severities.at(severity), msg_str);
     std::cout << msg << std::endl;
-    if (type != GL_DEBUG_TYPE_PERFORMANCE && severity != GL_DEBUG_SEVERITY_NOTIFICATION && severity != GL_DEBUG_SEVERITY_LOW)
+    if (type != GL_DEBUG_TYPE_PERFORMANCE && severity != GL_DEBUG_SEVERITY_NOTIFICATION && severity !=
+      GL_DEBUG_SEVERITY_LOW)
       throw std::runtime_error{msg};
   }, nullptr);
 
@@ -1007,7 +1034,7 @@ int main()
     std::vector<ConnectionData> connection_data{};
     ChildProcess child_process;
     IPCSemaphore child_process_semaphore{};
-    if (auto result{ init_child_process_and_fetch_connection_data(driver_and_devices) })
+    if (auto result{init_child_process_and_fetch_connection_data(driver_and_devices)})
     {
       connection_data = std::move(std::get<0>(*result));
       child_process = std::move(std::get<1>(*result));
@@ -1074,7 +1101,7 @@ int main()
       const auto mvp{glm::inverse(p_mat * v_mat)};
 
       // We don't have to do any synchronisation to set up the global GL drawing state:
-      Framebuffer shared_texture_framebuffer{ *shared_texture };
+      Framebuffer shared_texture_framebuffer{*shared_texture};
       shared_texture_framebuffer.bind();
       glClearColor(0.2f, 0.3f, t - std::floor(t), 1.0f);
       glUniformMatrix4fv(0, 1, GL_FALSE, glm::value_ptr(mvp));
@@ -1087,10 +1114,11 @@ int main()
       std::cout << "Host started rendering" << std::endl;
 
       glClear(GL_COLOR_BUFFER_BIT);
-      // glDrawArrays(GL_TRIANGLES, 0, 6);
+      glDrawArrays(GL_TRIANGLES, 0, 6);
 
-      // Blit the framebuffer to the screen for debugging:
-      shared_texture_framebuffer.blit_to_screen();
+      // Blit the framebuffer to the screen to verify what's being passed to the viewer program corresponds with what
+      // was written
+      shared_texture_framebuffer.blit_to_screen(window_width, window_height);
 
       // Signal the Vulkan app that OpenGL rendering is done
       std::cout << "Host done rendering" << std::endl;
@@ -1099,12 +1127,6 @@ int main()
       // is waiting for synchronization from OpenGL we need to explicitly flush commands to the GPU every frame.
       glFinish(); // glFlush();
       child_process_semaphore.signal();
-
-      // Draw an additional time directly to the screen to verify what's being passed to the viewer program corresponds
-      // with what was written
-      // shared_texture_framebuffer.unbind();
-      // glClear(GL_COLOR_BUFFER_BIT);
-      // glDrawArrays(GL_TRIANGLES, 0, 6);
 
 #ifdef _WIN32
       print_child_pipe(extract_from_child_pipe(*child_output_channel));
@@ -1128,10 +1150,12 @@ int main()
     //   std::cerr << "Failed to close child process" << std::endl;
     //   return -1;
     // }
-    child_process_semaphore = {}; // Close the semaphore (possibly forcing the client to run into a "pipe destroyed" signal)
-    if (auto child_process_return_code{ child_process.close() }; child_process_return_code < 0)
+    child_process_semaphore = {};
+    // Close the semaphore (possibly forcing the client to run into a "pipe destroyed" signal)
+    if (auto child_process_return_code{child_process.close()}; child_process_return_code < 0)
     {
-      std::cerr << "Child process successfully closed but returned error code: " << child_process_return_code << std::endl;
+      std::cerr << "Child process successfully closed but returned error code: " << child_process_return_code <<
+        std::endl;
       return -1;
     }
 #endif

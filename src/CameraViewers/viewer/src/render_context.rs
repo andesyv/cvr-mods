@@ -9,16 +9,20 @@ use uuid::Uuid;
 use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer};
 use vulkano::command_buffer::allocator::{CommandBufferAllocator, StandardCommandBufferAllocator};
 use vulkano::command_buffer::{
-    AutoCommandBufferBuilder, CommandBufferUsage, RenderPassBeginInfo, SemaphoreSubmitInfo,
-    SubmitInfo,
+    AutoCommandBufferBuilder, ClearColorImageInfo, CommandBufferUsage,
+    PrimaryCommandBufferAbstract, RenderPassBeginInfo, SemaphoreSubmitInfo, SubmitInfo,
 };
 use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
 use vulkano::descriptor_set::{DescriptorImageViewInfo, DescriptorSet, WriteDescriptorSet};
 use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
-use vulkano::device::{Device, DeviceCreateInfo, DeviceExtensions, DeviceProperties, Queue, QueueCreateInfo, QueueFlags};
+use vulkano::device::{
+    Device, DeviceCreateInfo, DeviceExtensions, DeviceProperties, Queue, QueueCreateInfo,
+    QueueFlags,
+};
+use vulkano::format::{ClearColorValue, Format};
 use vulkano::image::sampler::{Filter, Sampler, SamplerCreateInfo};
 use vulkano::image::view::ImageView;
-use vulkano::image::{Image, ImageLayout, ImageUsage};
+use vulkano::image::{Image, ImageCreateInfo, ImageLayout, ImageType, ImageUsage};
 use vulkano::instance::{Instance, InstanceCreateInfo};
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
 use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
@@ -181,7 +185,11 @@ fn create_instance(event_loop: &ActiveEventLoop) -> Arc<Instance> {
 //     .unwrap()
 // }
 
-fn matches_target_driver_and_devices(target_driver: &Option<Uuid>, target_devices: &[Uuid], properties: &DeviceProperties) -> bool {
+fn matches_target_driver_and_devices(
+    target_driver: &Option<Uuid>,
+    target_devices: &[Uuid],
+    properties: &DeviceProperties,
+) -> bool {
     if target_driver.is_none() && target_devices.is_empty() {
         return true;
     }
@@ -214,7 +222,8 @@ fn find_physical_device_and_queue_family(
         .ok()?
         .filter_map(|d| {
             // Filter on driver and devices
-            if !matches_target_driver_and_devices(&target_driver, &target_devices, &d.properties()) {
+            if !matches_target_driver_and_devices(&target_driver, &target_devices, &d.properties())
+            {
                 return None;
             }
 
@@ -407,7 +416,6 @@ struct ExternalCommunication {
     begin_sem: Arc<Semaphore>,
     end_sem: Arc<Semaphore>,
     host_process_semaphore: IPCSemaphore,
-    shared_image_descriptor_set: Arc<DescriptorSet>,
 }
 
 #[derive(Default)]
@@ -427,6 +435,7 @@ pub struct RenderContext {
     swapchain: Arc<Swapchain>,
     swapchain_fences: Vec<Option<Box<dyn GpuFuture>>>,
     external: Option<ExternalCommunication>,
+    image_descriptor_set: Arc<DescriptorSet>,
     last_submitted_swapchain_image_index: usize,
 }
 
@@ -448,7 +457,7 @@ impl RenderContext {
             creation_info.driver,
             creation_info.devices,
         )
-        .unwrap();
+        .expect("No suitable GPU or driver found");
 
         if cfg!(debug_assertions) {
             println!(
@@ -729,7 +738,7 @@ impl RenderContext {
 
         // Logic taken from https://github.com/vulkano-rs/vulkano/blob/master/examples/gl-interop/main.rs
         // (which is based on https://github.com/KhronosGroup/Vulkan-Samples/blob/main/samples/extensions/open_gl_interop/open_gl_interop.cpp)
-        let external = if let Some(channel) = creation_info.owner_channel {
+        let (external, image_descriptor_set) = if let Some(channel) = creation_info.owner_channel {
             let semaphore_handle_type = get_external_semaphore_type(&physical_device).unwrap();
             let memory_handle_type = get_external_memory_type(
                 &physical_device,
@@ -776,15 +785,55 @@ impl RenderContext {
             let image_view = ImageView::new_default(shared_image.into()).unwrap();
             let shared_image_descriptor_set = create_descriptor_set(&pipeline, &device, image_view);
 
-            Some(ExternalCommunication {
-                begin_sem,
-                end_sem,
-                host_process_semaphore,
+            (
+                Some(ExternalCommunication {
+                    begin_sem,
+                    end_sem,
+                    host_process_semaphore,
+                }),
                 shared_image_descriptor_set,
-            })
+            )
         } else {
             println!("Running without an attached host process (a.k.a. debug mode)");
-            None
+
+            // Our shader expects a descriptor set, so create a dummy image:
+            let image = Image::new(
+                memory_allocator,
+                ImageCreateInfo {
+                    image_type: ImageType::Dim2d,
+                    format: Format::R8G8B8A8_SRGB,
+                    extent: [64, 64, 1],
+                    usage: ImageUsage::SAMPLED | ImageUsage::TRANSFER_DST,
+                    ..Default::default()
+                },
+                Default::default(),
+            )
+            .unwrap();
+
+            // Issue an immediate command to paint the texture with a colour
+            let mut builder = AutoCommandBufferBuilder::primary(
+                command_buffer_allocator.clone(),
+                queue.queue_family_index(),
+                CommandBufferUsage::OneTimeSubmit,
+            )
+            .map_err(Validated::unwrap)
+            .unwrap();
+
+            builder
+                .clear_color_image(ClearColorImageInfo {
+                    clear_value: ClearColorValue::Float([1.0, 0.0, 1.0, 1.0]),
+                    image_layout: ImageLayout::General,
+                    ..ClearColorImageInfo::image(image.clone())
+                })
+                .unwrap();
+            let command_buffer = builder.build().unwrap();
+            let future = command_buffer.execute(queue.clone()).unwrap();
+            future.flush().unwrap();
+
+            let image_view = ImageView::new_default(image).unwrap();
+            let image_descriptor_set = create_descriptor_set(&pipeline, &device, image_view);
+
+            (None, image_descriptor_set)
         };
 
         Self {
@@ -796,6 +845,7 @@ impl RenderContext {
             swapchain,
             swapchain_fences: Vec::new(),
             external,
+            image_descriptor_set,
             last_submitted_swapchain_image_index: 0,
         }
 
@@ -1084,22 +1134,14 @@ impl RenderContext {
             .bind_pipeline_graphics(self.pipeline.clone())
             .unwrap()
             .bind_vertex_buffers(0, self.vertex_buffer.clone())
+            .unwrap()
+            .bind_descriptor_sets(
+                PipelineBindPoint::Graphics,
+                self.pipeline.layout().clone(),
+                0,
+                self.image_descriptor_set.clone(),
+            )
             .unwrap();
-
-        if let Some(ExternalCommunication {
-            shared_image_descriptor_set,
-            ..
-        }) = self.external.as_mut()
-        {
-            builder
-                .bind_descriptor_sets(
-                    PipelineBindPoint::Graphics,
-                    self.pipeline.layout().clone(),
-                    0,
-                    shared_image_descriptor_set.clone(),
-                )
-                .unwrap();
-        }
 
         let image_extent = self.framebuffers[image_index as usize].extent();
 
