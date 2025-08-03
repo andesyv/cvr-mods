@@ -40,3 +40,5 @@ target_include_directories(interop_test PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 
 target_sources(interop_test PRIVATE interop_test.cpp)
 target_sources(unit_test PRIVATE unit_tests.cpp)
+
+target_compile_definitions(unit_test PRIVATE UNIT_TEST_MOCK)

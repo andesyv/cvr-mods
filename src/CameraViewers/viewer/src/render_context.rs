@@ -1,3 +1,4 @@
+use std::ops::Neg;
 use crate::create_external_semaphore;
 use crate::external_image::ExternalImage;
 use crate::platform::{
@@ -867,7 +868,7 @@ impl RenderContext {
             .unwrap();
 
         let view = Mat4::look_at_rh(
-            Vec3::new(time.sin() * 5.0, 3.0, time.cos() * 5.0),
+            Vec3::new(time.neg().sin() * 5.0, 3.0, time.neg().cos() * 5.0),
             Vec3::ZERO,
             Vec3::Y,
         );

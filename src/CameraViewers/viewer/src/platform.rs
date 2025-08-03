@@ -72,11 +72,9 @@ pub fn get_external_semaphore_type(
 ) -> Option<ExternalSemaphoreHandleType> {
     use ExternalSemaphoreHandleType::*;
     for handle_type in [OpaqueWin32, OpaqueWin32Kmt, D3D12Fence, OpaqueFd, SyncFd] {
-        println!("Handle Type: {:?}", handle_type);
         if let Ok(properties) = physical_device
             .external_semaphore_properties(ExternalSemaphoreInfo::handle_type(handle_type))
         {
-            println!("Properties: {:?}", properties);
             if properties
                 .compatible_handle_types
                 .intersects(handle_type.into())

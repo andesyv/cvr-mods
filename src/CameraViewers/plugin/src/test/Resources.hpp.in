@@ -1,5 +1,8 @@
 #include <string_view>
 
+constexpr std::size_t WIDTH = 800;
+constexpr std::size_t HEIGHT = 600;
+
 static constexpr std::string_view vs_shader_source = R"SHADER(@TEST_VS_SHADER@)SHADER";
 static constexpr std::string_view fs_shader_source = R"SHADER(@TEST_FS_SHADER@)SHADER";
 
