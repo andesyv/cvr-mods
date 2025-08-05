@@ -74,14 +74,12 @@ pub fn get_external_semaphore_type(
     for handle_type in [OpaqueWin32, OpaqueWin32Kmt, D3D12Fence, OpaqueFd, SyncFd] {
         if let Ok(properties) = physical_device
             .external_semaphore_properties(ExternalSemaphoreInfo::handle_type(handle_type))
-        {
-            if properties
+            && properties
                 .compatible_handle_types
                 .intersects(handle_type.into())
-                && properties.exportable
-            {
-                return Some(handle_type);
-            }
+            && properties.exportable
+        {
+            return Some(handle_type);
         }
     }
     None
@@ -105,11 +103,11 @@ pub fn get_external_memory_type(
         OpaqueFd,
         DmaBuf,
     ] {
-        println!("Handle Type: {:?}", handle_type);
+        // println!("Handle Type: {:?}", handle_type);
         let mut info = ExternalBufferInfo::handle_type(handle_type);
         info.usage = usage;
         if let Ok(properties) = physical_device.external_buffer_properties(info) {
-            println!("Properties: {:?}", properties);
+            // println!("Properties: {:?}", properties);
             if properties
                 .external_memory_properties
                 .compatible_handle_types

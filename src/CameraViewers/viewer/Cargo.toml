@@ -13,6 +13,7 @@ ash = "0.38.0" # For some minor functionality not covered by vulkano
 winit = "0.30.11" # Apparantly has to be hardcoded to same version vulkano-win uses
 glam = { version = "0.30.5", features = ["debug-glam-assert"] }
 uuid = { version = "1.17.0", features = ["v8"] }
+egui_winit_vulkano = { version = "0.28.0", default-features = false, features = ["wayland", "x11"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.174"

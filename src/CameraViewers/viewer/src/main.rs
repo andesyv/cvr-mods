@@ -6,6 +6,7 @@ use crate::window::Window;
 use std::env::args;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Instant;
 use uuid::Uuid;
 #[cfg(test)]
 use uuid::uuid;
@@ -83,14 +84,26 @@ fn parse_driver_and_devices_uuids(configuration: &str) -> Option<(Uuid, Vec<Uuid
 }
 
 fn main() {
-    println!("Hello, viewer!");
-
     let args: Vec<_> = args().collect();
     let configuration = parse_args(&args[..]);
 
-    let event_loop = EventLoop::new().unwrap();
-    let mut window = Window::new(configuration);
-    event_loop.run_app(&mut window).unwrap();
+    let cleanup_timer;
+    {
+        let event_loop = EventLoop::new().unwrap();
+        let mut window = Window::new(configuration);
+        event_loop.run_app(&mut window).unwrap();
+        if cfg!(debug_assertions) {
+            cleanup_timer = Instant::now();
+        } else {
+            // EventLoop is surprisingly slow to close. So we'll just let the OS cleanup resources
+            // instead in release builds
+            std::process::exit(0);
+        }
+    }
+    println!(
+        "Event loop cleanup took {} milliseconds",
+        cleanup_timer.elapsed().as_millis()
+    );
 }
 
 #[test]

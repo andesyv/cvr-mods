@@ -1,14 +1,47 @@
-use std::sync::Arc;
-use std::time::Instant;
-
 use crate::render_context::{DrawResult, RenderContext, RenderContextCreationInfo};
 use crate::{HEIGHT, WIDTH};
+use std::sync::Arc;
+use std::time::Instant;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, NamedKey};
 use winit::window::WindowId;
+
+struct FrameTimeMeasurements {
+    pub frame_count: usize,
+    last_frametime_measurement: Instant,
+    frames_per_second: f32,
+}
+
+impl Default for FrameTimeMeasurements {
+    fn default() -> Self {
+        Self {
+            frame_count: 0,
+            last_frametime_measurement: Instant::now(),
+            frames_per_second: 0.0,
+        }
+    }
+}
+
+impl FrameTimeMeasurements {
+    pub fn calc_current_average(&mut self) -> f32 {
+        if self.frame_count > 30 {
+            let frames_per_second = (self.frame_count as f64
+                / self.last_frametime_measurement.elapsed().as_secs_f64())
+                as f32;
+            self.last_frametime_measurement = Instant::now();
+            self.frame_count = 0;
+            self.frames_per_second = frames_per_second;
+        }
+        self.frames_per_second
+    }
+
+    pub fn increment_frame_count(&mut self) {
+        self.frame_count += 1;
+    }
+}
 
 pub struct Window {
     close_requested: bool,
@@ -17,6 +50,7 @@ pub struct Window {
     context: Option<RenderContext>,
     swapchain_outdated: bool,
     app_timer: Instant,
+    frame_time_measurements: FrameTimeMeasurements,
 }
 
 impl Window {
@@ -28,6 +62,7 @@ impl Window {
             context: None,
             swapchain_outdated: false,
             app_timer: Instant::now(),
+            frame_time_measurements: Default::default(),
         }
     }
 }
@@ -63,6 +98,12 @@ impl ApplicationHandler for Window {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
+        if let Some(context) = &mut self.context
+            && context.gui().update(&event)
+        {
+            return;
+        }
+
         match &event {
             WindowEvent::CloseRequested => self.close_requested = true,
             WindowEvent::KeyboardInput {
@@ -86,7 +127,12 @@ impl ApplicationHandler for Window {
                 }
 
                 let t = self.app_timer.elapsed().as_secs_f32();
-                match self.context.as_mut().unwrap().draw(t) {
+                match self
+                    .context
+                    .as_mut()
+                    .unwrap()
+                    .draw(t, Some(self.frame_time_measurements.calc_current_average()))
+                {
                     DrawResult::WaitingForHost => {
                         self.inner_window.as_ref().unwrap().request_redraw()
                     }
@@ -94,8 +140,12 @@ impl ApplicationHandler for Window {
                         self.close_requested = true;
                         return;
                     }
-                    DrawResult::SwapchainOutdated => self.swapchain_outdated = true,
-                    _ => (),
+                    result => {
+                        if let DrawResult::SwapchainOutdated = result {
+                            self.swapchain_outdated = true;
+                        }
+                        self.frame_time_measurements.increment_frame_count();
+                    }
                 }
 
                 if self.swapchain_outdated {

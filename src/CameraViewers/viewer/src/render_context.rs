@@ -1,11 +1,14 @@
-use std::ops::Neg;
 use crate::create_external_semaphore;
 use crate::external_image::ExternalImage;
 use crate::platform::{
     IPCChannel, IPCSemaphore, MemoryExporter, SemaphoreReadyStatus, get_external_memory_type,
     get_external_semaphore_type,
 };
+
+use egui_winit_vulkano::egui::Align2;
+use egui_winit_vulkano::{Gui, GuiConfig, egui};
 use glam::{Mat4, Vec3};
+use std::ops::Neg;
 use std::sync::Arc;
 use uuid::Uuid;
 use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer};
@@ -98,7 +101,7 @@ fn create_instance(event_loop: &ActiveEventLoop) -> Arc<Instance> {
     let mut required_extensions = Surface::required_extensions(event_loop).unwrap();
     // With ext_debug_utils we can specify a custom debug message handler. But I don't really have
     // a need for this as of right now.
-    // required_extensions.ext_debug_utils = true;
+    required_extensions.ext_debug_utils = true;
     // Included in Vulkan 1.1, so not needed anymore.
     // required_extensions.khr_get_physical_device_properties2 = true;
     required_extensions.khr_external_memory_capabilities = true;
@@ -112,7 +115,6 @@ fn create_instance(event_loop: &ActiveEventLoop) -> Arc<Instance> {
                 .unwrap()
                 .any(|available_layer| available_layer.name() == wanted_layer)
             {
-                println!("Using validation layer: {}", wanted_layer);
                 break 'a vec![wanted_layer.to_string()];
             }
         }
@@ -202,6 +204,16 @@ fn create_swapchain(
         .surface_capabilities(surface, Default::default())
         .unwrap();
 
+    // egui likely renders incorrectly if the swapchain image format is not UNORM:
+    // https://github.com/hakolao/egui_winit_vulkano#the-correct-color-space
+    // But we're not really displaying colors at the moment, so we don't really care.
+    // const DESIRED_FORMATS: [Format; 4] = [
+    //     Format::R8G8B8A8_UNORM,
+    //     Format::R8G8B8_UNORM,
+    //     Format::R8G8B8A8_SNORM,
+    //     Format::R8G8B8A8_SRGB,
+    // ];
+
     let image_format = device
         .physical_device()
         .surface_formats(surface, Default::default())
@@ -248,9 +260,7 @@ fn create_framebuffers(
     let framebuffers = images
         .iter()
         .map(|img| {
-            let view = ImageView::new_default(img.clone())
-                .map_err(Validated::unwrap)
-                .unwrap();
+            let view = ImageView::new_default(img.clone()).unwrap();
             Framebuffer::new(
                 render_pass.clone(),
                 FramebufferCreateInfo {
@@ -258,7 +268,6 @@ fn create_framebuffers(
                     ..Default::default()
                 },
             )
-            .map_err(Validated::unwrap)
             .unwrap()
         })
         .collect();
@@ -325,7 +334,6 @@ fn create_graphics_pipeline(
             .into_pipeline_layout_create_info(device.clone())
             .unwrap(),
     )
-    .map_err(Validated::unwrap)
     .unwrap();
 
     let subpass = Subpass::from(render_pass, 0).unwrap();
@@ -407,11 +415,11 @@ pub struct RenderContext {
     vertex_buffer: Subbuffer<[MeshVertex]>,
     framebuffers: Vec<Arc<Framebuffer>>,
     swapchain: Arc<Swapchain>,
-    swapchain_fences: Vec<Option<Box<dyn GpuFuture>>>,
+    last_submitted_frame_fence: Option<Box<dyn GpuFuture>>,
     external: Option<ExternalCommunication>,
     image_descriptor_set: Arc<DescriptorSet>,
-    last_submitted_swapchain_image_index: usize,
     perspective: Mat4,
+    gui: Gui,
 }
 
 pub enum DrawResult {
@@ -432,6 +440,9 @@ impl RenderContext {
         creation_info: RenderContextCreationInfo,
     ) -> Self {
         let instance = create_instance(event_loop);
+        if cfg!(debug_assertions) {
+            println!("Enabled layers: {}", instance.enabled_layers().join(", "));
+        }
         let api_version = instance.api_version();
         // let _debug_messenger = unsafe { window::create_debug_messenger(&instance) };
 
@@ -463,7 +474,6 @@ impl RenderContext {
                 ..Default::default()
             },
         )
-        .map_err(Validated::unwrap)
         .unwrap();
         let queue = queue.next().unwrap();
 
@@ -486,7 +496,6 @@ impl RenderContext {
                 depth_stencil: {}
             }
         )
-        .map_err(Validated::unwrap)
         .unwrap();
 
         // Cube vertex data
@@ -678,6 +687,13 @@ impl RenderContext {
             )
             .unwrap();
 
+            if cfg!(debug_assertions) {
+                println!(
+                    "Using the {:?} handle type for external memory",
+                    memory_handle_type
+                );
+            }
+
             let begin_sem =
                 create_external_semaphore(device.clone(), semaphore_handle_type.into()).unwrap();
             let end_sem =
@@ -760,7 +776,6 @@ impl RenderContext {
                 queue.queue_family_index(),
                 CommandBufferUsage::OneTimeSubmit,
             )
-            .map_err(Validated::unwrap)
             .unwrap();
 
             builder
@@ -780,6 +795,18 @@ impl RenderContext {
             (None, image_descriptor_set)
         };
 
+        let gui = Gui::new(
+            event_loop,
+            surface,
+            queue.clone(),
+            swapchain.image_format(),
+            GuiConfig {
+                is_overlay: true,
+                allow_srgb_render_target: true, // We're only displaying text, so we don't care
+                ..Default::default()
+            },
+        );
+
         Self {
             pipeline,
             command_buffer_allocator,
@@ -787,18 +814,17 @@ impl RenderContext {
             vertex_buffer,
             framebuffers,
             swapchain,
-            swapchain_fences: Vec::new(),
+            last_submitted_frame_fence: None,
             external,
             image_descriptor_set,
-            last_submitted_swapchain_image_index: 0,
             perspective: create_perspective(dimensions[0], dimensions[1]),
+            gui,
         }
     }
 
-    pub fn draw(&mut self, time: f32) -> DrawResult {
+    pub fn draw(&mut self, time: f32, frames_per_second: Option<f32>) -> DrawResult {
         if let Some(ExternalCommunication {
             host_process_semaphore,
-            begin_sem,
             ..
         }) = self.external.as_mut()
         {
@@ -813,7 +839,23 @@ impl RenderContext {
                 SemaphoreReadyStatus::ConnectionLost => return DrawResult::HostDisconnected,
                 SemaphoreReadyStatus::Ready => (),
             }
+        }
 
+        if let Some(fps) = frames_per_second {
+            self.gui.immediate_ui(|gui| {
+                let context = gui.context();
+                let stats_window = egui::Window::new("FPS")
+                    .pivot(Align2::RIGHT_TOP)
+                    .default_pos(
+                        context.screen_rect().right_top() + egui::Vec2::from([-50.0, 50.0]),
+                    );
+                stats_window.show(&context, |ui| {
+                    ui.label(format!("Submitted: {:.1}", fps,));
+                });
+            });
+        }
+
+        if let Some(ExternalCommunication { begin_sem, .. }) = self.external.as_mut() {
             self.queue
                 .with(|mut q| unsafe {
                     q.submit_unchecked(
@@ -835,7 +877,6 @@ impl RenderContext {
             self.queue.queue_family_index(),
             CommandBufferUsage::OneTimeSubmit,
         )
-        .map_err(Validated::unwrap)
         .unwrap();
 
         let (image_index, mut swapchain_outdated, acquire_future) =
@@ -890,25 +931,36 @@ impl RenderContext {
 
         let command_buffer = builder.build().map_err(Validated::unwrap).unwrap();
 
-        // In case we cought up to our maximum frames-in-flight, finish waiting for the current
-        // frame to finish from last time
-        self.swapchain_fences
-            .get_mut(image_index as usize)
-            .map(|inner| inner.take());
+        // Combine the last frame's future with one representing the next frame
+        let current_future =
+            if let Some(mut last_frame_future) = self.last_submitted_frame_fence.take() {
+                // Despite it's name, cleanup_finished() is merely a hint to Vulkano that it's "okay"
+                // to clean up resource locks now
+                last_frame_future.cleanup_finished();
+                last_frame_future.join(acquire_future).boxed()
+            } else {
+                acquire_future.boxed()
+            };
 
-        let current_future = if let Some(last_frame_future) = self
-            .swapchain_fences
-            .get_mut(self.last_submitted_swapchain_image_index)
-            .and_then(Option::take)
-        {
-            last_frame_future.join(acquire_future).boxed()
-        } else {
-            acquire_future.boxed()
-        };
+        // Append the command buffer to said future
+        let current_future = current_future
+            .then_execute(self.queue.clone(), command_buffer)
+            .unwrap();
+
+        let screen_image_view = self
+            .framebuffers
+            .get(image_index as usize)
+            .unwrap()
+            .attachments()
+            .iter()
+            .next()
+            .unwrap()
+            .clone();
+
+        // Append commands for drawing gui to said future
+        let current_future = self.gui.draw_on_image(current_future, screen_image_view);
 
         match current_future
-            .then_execute(self.queue.clone(), command_buffer)
-            .unwrap()
             .then_swapchain_present(
                 self.queue.clone(),
                 SwapchainPresentInfo::swapchain_image_index(self.swapchain.clone(), image_index),
@@ -917,13 +969,7 @@ impl RenderContext {
             .map_err(Validated::unwrap)
         {
             Ok(current_future) => {
-                if self.swapchain_fences.len() < image_index as usize + 1 {
-                    self.swapchain_fences.push(Some(current_future.boxed()));
-                } else {
-                    self.swapchain_fences[image_index as usize] = Some(current_future.boxed());
-                }
-
-                self.last_submitted_swapchain_image_index = image_index as usize;
+                self.last_submitted_frame_fence = Some(current_future.boxed());
             }
             Err(VulkanError::OutOfDate) => swapchain_outdated = true,
             Err(e) => panic!("Failed to submit new frame: {:?}", e),
@@ -961,7 +1007,7 @@ impl RenderContext {
 
     pub fn recreate_swapchain(&mut self, width: u32, height: u32) {
         // First, we need to synchronize the CPU and the GPU by waiting for the frames-in-flight
-        self.swapchain_fences.clear();
+        self.last_submitted_frame_fence.take();
 
         // First, fetch the device from the current swapchain
         let device = self.swapchain.device().clone();
@@ -990,5 +1036,9 @@ impl RenderContext {
         // Finally, recreate the graphics pipeline as well as that one makes use of the viewport
         self.pipeline = create_graphics_pipeline(device, viewport, render_pass);
         self.perspective = create_perspective(width, height);
+    }
+
+    pub fn gui(&mut self) -> &mut Gui {
+        &mut self.gui
     }
 }
